@@ -62,6 +62,20 @@ def _configurar(ctx, frame):
     msgbox.info(ctx, frame, _TODO.format(v=__version__, cmd="Configurar"))
 
 
+def _store_or_none(ctx):
+    """
+    The profile-backed store, or an empty in-memory one if the profile is
+    unreadable. The self-test must survive exactly the conditions it exists to
+    diagnose, so it never lets a broken profile stop the report.
+    """
+    from signdocs.store import JsonStore
+
+    try:
+        return JsonStore(paths.state_file(ctx))
+    except Exception:
+        return JsonStore()
+
+
 def _selftest(ctx, frame):
     """
     Headless-safe health check. Writes its result to the user profile instead
@@ -98,6 +112,34 @@ def _selftest(ctx, frame):
         report["openssl"] = ssl.OPENSSL_VERSION
     except Exception:
         report["openssl"] = None
+
+    # Reach the authorization server for real. On a corporate desktop the
+    # first thing that breaks is TLS — a bundled Python with no trust store
+    # (macOS), or an intercepting proxy presenting its own root — and it
+    # breaks identically for every SignDocs call afterwards. Recording the
+    # exact error here saves a support round-trip.
+    #
+    # Never fatal: a machine that is simply offline still gets a report.
+    from signdocs import config, oauth
+    from signdocs.httpclient import _cacert_path, ssl_context
+    report["ca_bundle"] = _cacert_path()
+    report["ca_bundle_present"] = os.path.exists(_cacert_path())
+    try:
+        report["ca_roots"] = len(ssl_context().get_ca_certs())
+    except Exception as exc:
+        report["ca_roots"] = None
+        report["errors"].append("ca bundle: {0}".format(exc))
+
+    endpoints = config.STAGES[config.current_stage(_store_or_none(ctx))]
+    report["stage"] = config.current_stage(_store_or_none(ctx))
+    report["auth_host"] = endpoints["auth"]
+    try:
+        metadata = oauth.discover(endpoints)
+        report["auth_reachable"] = True
+        report["auth_issuer"] = (metadata or {}).get("issuer")
+    except Exception as exc:
+        report["auth_reachable"] = False
+        report["auth_error"] = "{0}: {1}".format(type(exc).__name__, exc)
 
     try:
         report["user_dir"] = paths.user_dir(ctx)

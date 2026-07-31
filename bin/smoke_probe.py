@@ -133,8 +133,20 @@ def main():
                   not missing)
             if missing:
                 print("      missing: %s" % missing)
+            check("vendored CA bundle loaded in the office's own Python",
+                  bool(report.get("ca_roots")))
             print("      office python: %s" % report["python_version"].split()[0])
             print("      openssl:       %s" % report.get("openssl"))
+            print("      ca roots:      %s" % report.get("ca_roots"))
+            print("      stage:         %s" % report.get("stage"))
+            # Connectivity is reported, never required: CI and air-gapped
+            # machines are both legitimate places to run this.
+            if report.get("auth_reachable"):
+                print("      auth:          reachable, issuer %s"
+                      % report.get("auth_issuer"))
+            else:
+                print("      auth:          UNREACHABLE (%s)"
+                      % report.get("auth_error"))
     finally:
         doc.close(False)
 

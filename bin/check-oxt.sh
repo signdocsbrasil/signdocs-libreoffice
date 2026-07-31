@@ -48,10 +48,29 @@ LISTING="$(mktemp)"; trap 'rm -f "$LISTING"' EXIT
 unzip -Z1 "$OXT" > "$LISTING"
 
 for required in description.xml META-INF/manifest.xml Addons.xcu ProtocolHandler.xcu \
-                signdocs_addon.py pythonpath/signdocs/__init__.py LICENSE; do
+                signdocs_addon.py pythonpath/signdocs/__init__.py LICENSE \
+                vendor/cacert.pem; do
 	grep -qxF "$required" "$LISTING" || fail "missing from archive: $required"
 done
 ok "required members present"
+
+# Without the bundle, LibreOffice's own Python on macOS has no trust store at
+# all and every HTTPS call fails. httpclient falls back to the platform default
+# rather than to an unverified connection, but shipping without it silently
+# breaks a whole platform.
+python3 - <<'PY' || exit 1
+import ssl, sys
+try:
+    ctx = ssl.create_default_context(cafile='vendor/cacert.pem')
+except Exception as exc:
+    sys.stderr.write('FAIL: vendor/cacert.pem is not a usable CA bundle: %s\n' % exc)
+    sys.exit(1)
+count = len(ctx.get_ca_certs())
+if count < 50:
+    sys.stderr.write('FAIL: vendor/cacert.pem holds only %d certs; looks truncated\n' % count)
+    sys.exit(1)
+print('  ok  vendor/cacert.pem loads (%d roots)' % count)
+PY
 
 # description.xml must be at the archive root, not nested one level down.
 grep -qE '^[^/]+/description\.xml$' "$LISTING" \
