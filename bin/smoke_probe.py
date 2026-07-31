@@ -15,6 +15,7 @@ modes:
 Both are invisible in the office log. This asserts them directly.
 """
 
+import base64
 import json
 import os
 import sys
@@ -149,6 +150,41 @@ def main():
                       % report.get("auth_error"))
     finally:
         doc.close(False)
+
+    # --- 4. real PDF export from every module ----------------------------
+    # intake.export_pdf is the one piece that cannot be unit-tested: it needs
+    # a live document and a real filter. Drive it against actual documents.
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pythonpath"
+    ))
+    from signdocs import intake  # noqa: E402 - path set up immediately above
+
+    for factory, expected_module in (
+        ("private:factory/swriter", "writer"),
+        ("private:factory/scalc", "calc"),
+        ("private:factory/simpress", "impress"),
+        ("private:factory/sdraw", "draw"),
+    ):
+        doc = desktop.loadComponentFromURL(factory, "_blank", 0, ())
+        try:
+            check("%s maps to the %s filter" % (expected_module, expected_module),
+                  intake.module_of(doc) == expected_module)
+            exported = intake.export_pdf(doc)
+            raw = base64.b64decode(exported["content"])
+            check("%s exports a real PDF (%d bytes)" % (expected_module, len(raw)),
+                  raw.startswith(b"%PDF-"))
+            # An unsaved document still has the Title the user sees in the
+            # title bar ("Untitled 1" / "Sem título 1"), and that is a better
+            # name than a generic fallback — so assert the shape, not a
+            # specific string that depends on the office's UI locale.
+            name = exported["filename"]
+            check("%s export names the file sensibly (%r)" % (expected_module, name),
+                  name.endswith(".pdf") and len(name) > 4
+                  and "/" not in name and "\\" not in name)
+            check("%s export reports its module" % expected_module,
+                  exported["module"] == expected_module)
+        finally:
+            doc.close(False)
 
     print("")
     if failures:

@@ -138,3 +138,25 @@ def post_form(url, fields, headers=None, timeout=DEFAULT_TIMEOUT):
 
 def get_json(url, headers=None, timeout=DEFAULT_TIMEOUT):
     return request(url, "GET", None, headers, timeout)
+
+
+def get_bytes(url, timeout=DEFAULT_TIMEOUT):
+    """
+    Fetch a presigned S3 URL.
+
+    Deliberately sends no Authorization header: a presigned URL already
+    carries its signature in the query string, and S3 rejects a request that
+    also presents an Authorization header with 400 "Only one auth mechanism
+    allowed". Never route these through `request()` with a bearer token.
+    """
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("User-Agent", USER_AGENT)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ssl_context()) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise HttpError(exc.code, "HTTP %s ao baixar o documento" % exc.code, None, url)
+    except urllib.error.URLError as exc:
+        raise NetworkError(str(getattr(exc, "reason", exc)))
+    except (ssl.SSLError, OSError) as exc:
+        raise NetworkError(str(exc))
