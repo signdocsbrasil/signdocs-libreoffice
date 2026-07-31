@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A wrong media-type here does not raise an error: the entry is silently
+  ignored and the extension installs but does nothing. Same failure class as
+  the ONLYOFFICE `{GUID}` directory-name trap and the Nextcloud `composer/`
+  vendor-dir bug. Do not edit these strings casually.
+-->
+<manifest:manifest xmlns:manifest="http://openoffice.org/2001/manifest">
+
+  <manifest:file-entry
+      manifest:media-type="application/vnd.sun.star.uno-component;type=Python"
+      manifest:full-path="signdocs_addon.py"/>
+
+  <manifest:file-entry
+      manifest:media-type="application/vnd.sun.star.configuration-data"
+      manifest:full-path="ProtocolHandler.xcu"/>
+
+  <manifest:file-entry
+      manifest:media-type="application/vnd.sun.star.configuration-data"
+      manifest:full-path="Addons.xcu"/>
+
+</manifest:manifest>

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Extension manifest.
+
+  No <registration>/<simple-license> block on purpose: declaring a license
+  forces an acceptance dialog on every install, and the primary deployment
+  story here is a sysadmin running a shared `unopkg add` across a fleet of
+  workstations. The MPL-2.0 text still ships in LICENSE.
+  (XML comments cannot contain a double hyphen, hence the wording.)
+-->
+<description
+    xmlns="http://openoffice.org/extensions/description/2006"
+    xmlns:d="http://openoffice.org/extensions/description/2006"
+    xmlns:lo="http://libreoffice.org/extensions/description/2011"
+    xmlns:xlink="http://www.w3.org/1999/xlink">
+
+  <identifier value="br.com.signdocs.libreoffice"/>
+  <version value="0.1.0"/>
+
+  <display-name>
+    <name lang="pt-BR">SignDocs Brasil — assinatura eletrônica</name>
+    <name lang="en">SignDocs Brasil — electronic signature</name>
+    <name lang="es">SignDocs Brasil — firma electrónica</name>
+  </display-name>
+
+  <icon>
+    <default xlink:href="icons/extension.png"/>
+    <high-contrast xlink:href="icons/extension_hc.png"/>
+  </icon>
+
+  <extension-description>
+    <src lang="pt-BR" xlink:href="description/desc_pt-BR.txt"/>
+    <src lang="en" xlink:href="description/desc_en.txt"/>
+  </extension-description>
+
+  <publisher>
+    <name xlink:href="https://signdocs.com.br" lang="pt-BR">SignDocs Brasil</name>
+    <name xlink:href="https://signdocs.com.br" lang="en">SignDocs Brasil</name>
+  </publisher>
+
+  <dependencies>
+    <lo:LibreOffice-minimal-version value="7.0" d:name="LibreOffice 7.0"/>
+  </dependencies>
+
+  <!--
+    Self-hosted update feed. Decouples shipping a fix from the extensions.libreoffice.org
+    moderation queue, whose latency is unbounded.
+  -->
+  <update-information>
+    <src xlink:href="https://cdn.signdocs.com.br/libreoffice/update.xml"/>
+  </update-information>
+
+</description>

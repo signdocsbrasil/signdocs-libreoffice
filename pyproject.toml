@@ -1,0 +1,22 @@
+# Development tooling only. Excluded from the .oxt — the extension has no
+# build step and no Python dependencies, by design.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+# LibreOffice 7.0 (our declared minimum) bundles Python 3.8, and the office
+# runs this code with its own interpreter. Targeting the oldest supported
+# version is what stops a 3.9+ construct from shipping and failing at import
+# time on a customer's install, where there is no traceback to see.
+target-version = "py38"
+line-length = 100
+exclude = []
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.isort]
+# `signdocs` is the extension's own package; `uno`/`unohelper`/`com.sun.star`
+# are provided by the office at runtime, so they sort as third-party.
+known-first-party = ["signdocs"]

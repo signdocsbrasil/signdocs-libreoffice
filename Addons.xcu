@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  UI registration: a submenu under Ferramentas ▸ Suplementos, plus a docked
+  toolbar with the primary action.
+
+  `Context` restricts each entry to the document types we can export to PDF.
+  An empty Context would also show the entry in Base, Math and the Start
+  Centre, where there is nothing to sign.
+
+  `%origin%` resolves to the installed extension directory.
+-->
+<oor:component-data
+    xmlns:oor="http://openoffice.org/2001/registry"
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    oor:name="Addons"
+    oor:package="org.openoffice.Office">
+
+  <node oor:name="AddonUI">
+
+    <node oor:name="AddonMenu">
+      <node oor:name="br.com.signdocs.libreoffice.menu" oor:op="replace">
+        <prop oor:name="Title" oor:type="xs:string">
+          <value>SignDocs Brasil</value>
+          <value xml:lang="pt-BR">SignDocs Brasil</value>
+        </prop>
+        <prop oor:name="Target" oor:type="xs:string">
+          <value>_self</value>
+        </prop>
+        <prop oor:name="Context" oor:type="xs:string">
+          <value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument,com.sun.star.drawing.DrawingDocument</value>
+        </prop>
+
+        <node oor:name="Submenu">
+
+          <node oor:name="m01" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string">
+              <value>br.com.signdocs.libreoffice:Enviar</value>
+            </prop>
+            <prop oor:name="Title" oor:type="xs:string">
+              <value>Send for signature…</value>
+              <value xml:lang="pt-BR">Enviar para assinatura…</value>
+              <value xml:lang="es">Enviar para firma…</value>
+            </prop>
+            <prop oor:name="Target" oor:type="xs:string">
+              <value>_self</value>
+            </prop>
+            <prop oor:name="Context" oor:type="xs:string">
+              <value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument,com.sun.star.drawing.DrawingDocument</value>
+            </prop>
+          </node>
+
+          <node oor:name="m02" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string">
+              <value>private:separator</value>
+            </prop>
+          </node>
+
+          <node oor:name="m03" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string">
+              <value>br.com.signdocs.libreoffice:Historico</value>
+            </prop>
+            <prop oor:name="Title" oor:type="xs:string">
+              <value>Recent sends…</value>
+              <value xml:lang="pt-BR">Envios recentes…</value>
+              <value xml:lang="es">Envíos recientes…</value>
+            </prop>
+            <prop oor:name="Target" oor:type="xs:string">
+              <value>_self</value>
+            </prop>
+          </node>
+
+          <node oor:name="m04" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string">
+              <value>br.com.signdocs.libreoffice:Configurar</value>
+            </prop>
+            <prop oor:name="Title" oor:type="xs:string">
+              <value>Settings…</value>
+              <value xml:lang="pt-BR">Configurações…</value>
+              <value xml:lang="es">Configuración…</value>
+            </prop>
+            <prop oor:name="Target" oor:type="xs:string">
+              <value>_self</value>
+            </prop>
+          </node>
+
+        </node>
+      </node>
+    </node>
+
+    <node oor:name="OfficeToolBar">
+      <node oor:name="br.com.signdocs.libreoffice.toolbar" oor:op="replace">
+        <prop oor:name="Title" oor:type="xs:string">
+          <value>SignDocs Brasil</value>
+          <value xml:lang="pt-BR">SignDocs Brasil</value>
+        </prop>
+        <node oor:name="t01" oor:op="replace">
+          <prop oor:name="URL" oor:type="xs:string">
+            <value>br.com.signdocs.libreoffice:Enviar</value>
+          </prop>
+          <prop oor:name="Title" oor:type="xs:string">
+            <value>Send for signature</value>
+            <value xml:lang="pt-BR">Enviar para assinatura</value>
+            <value xml:lang="es">Enviar para firma</value>
+          </prop>
+          <prop oor:name="Target" oor:type="xs:string">
+            <value>_self</value>
+          </prop>
+          <prop oor:name="Context" oor:type="xs:string">
+            <value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument,com.sun.star.drawing.DrawingDocument</value>
+          </prop>
+        </node>
+      </node>
+    </node>
+
+    <node oor:name="Images">
+      <node oor:name="br.com.signdocs.libreoffice.image.enviar" oor:op="replace">
+        <prop oor:name="URL" oor:type="xs:string">
+          <value>br.com.signdocs.libreoffice:Enviar</value>
+        </prop>
+        <node oor:name="UserDefinedImages">
+          <prop oor:name="ImageSmallURL">
+            <value>%origin%/icons/enviar_16.png</value>
+          </prop>
+          <prop oor:name="ImageBigURL">
+            <value>%origin%/icons/enviar_26.png</value>
+          </prop>
+          <prop oor:name="ImageSmallHCURL">
+            <value>%origin%/icons/enviar_16_hc.png</value>
+          </prop>
+          <prop oor:name="ImageBigHCURL">
+            <value>%origin%/icons/enviar_26_hc.png</value>
+          </prop>
+        </node>
+      </node>
+    </node>
+
+  </node>
+</oor:component-data>
