@@ -74,7 +74,19 @@ python3 -m pytest tests/  # lógica pura, sem office
 bash bin/build-oxt.sh     # → signdocs-brasil-<versão>.oxt
 bash bin/check-oxt.sh     # forma do pacote + unopkg add/list/validate real
 bash bin/smoke-oxt.sh     # office headless: menu registrado + dispatch executa
+
+# Fluxo completo contra a API de homologação (precisa de credenciais)
+export SIGNDOCS_CLIENT_ID=... SIGNDOCS_CLIENT_SECRET=...
+python3 bin/e2e_hml.py
 ```
+
+`bin/e2e_hml.py` roda o fluxo real de ponta a ponta: consentimento pelo
+navegador roteirizado, troca do código, rotação do refresh token, exportação de
+um PDF pelo próprio LibreOffice, criação de sessão e de envelope, consulta de
+status e cancelamento. **Não dispara e-mail**: o envio de um signatário usa
+`owner.email` igual ao do signatário (a API entende que remetente e signatário
+são a mesma pessoa e não envia convite) e o envelope não usa `owner`. Tudo o
+que é criado é cancelado no fim.
 
 Nenhuma dependência Python de terceiros, nunca: o LibreOffice traz o próprio
 interpretador, sem `pip`. `bin/check-oxt.sh` recusa o pacote se qualquer módulo
