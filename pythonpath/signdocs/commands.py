@@ -65,6 +65,26 @@ def _store_or_none(ctx):
         return JsonStore()
 
 
+def _probe(url):
+    """
+    Touch a URL and treat any HTTP response as success.
+
+    The question this answers is "can this machine reach SignDocs at all" —
+    DNS, proxy, TLS — not "is the endpoint happy". An unauthenticated call
+    returning 401 proves everything this is checking.
+    """
+    import urllib.request
+
+    from signdocs.httpclient import USER_AGENT, ssl_context
+
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        urllib.request.urlopen(request, timeout=15, context=ssl_context()).read(1)
+    except urllib.error.HTTPError:
+        return  # a status is an answer
+    return
+
+
 def _selftest(ctx, frame):
     """
     Headless-safe health check. Writes its result to the user profile instead
@@ -109,7 +129,7 @@ def _selftest(ctx, frame):
     # exact error here saves a support round-trip.
     #
     # Never fatal: a machine that is simply offline still gets a report.
-    from signdocs import config, oauth
+    from signdocs import config
     from signdocs.httpclient import _cacert_path, ssl_context
     report["ca_bundle"] = _cacert_path()
     report["ca_bundle_present"] = os.path.exists(_cacert_path())
@@ -119,16 +139,22 @@ def _selftest(ctx, frame):
         report["ca_roots"] = None
         report["errors"].append("ca bundle: {0}".format(exc))
 
-    endpoints = config.STAGES[config.current_stage(_store_or_none(ctx))]
-    report["stage"] = config.current_stage(_store_or_none(ctx))
-    report["auth_host"] = endpoints["auth"]
-    try:
-        metadata = oauth.discover(endpoints)
-        report["auth_reachable"] = True
-        report["auth_issuer"] = (metadata or {}).get("issuer")
-    except Exception as exc:
-        report["auth_reachable"] = False
-        report["auth_error"] = "{0}: {1}".format(type(exc).__name__, exc)
+    stage = config.current_stage(_store_or_none(ctx))
+    report["stage"] = stage
+    report["login_host"] = config.COGNITO["domain"]
+    report["api_host"] = config.STAGES[stage]["api"]
+
+    # Any HTTP status means DNS, TCP and TLS all worked, which is what this is
+    # actually diagnosing. A 401 or 404 is a perfectly good answer here — only
+    # the absence of a response tells us something is wrong.
+    for label, url in (("login", report["login_host"]),
+                       ("api", report["api_host"] + config.API_PREFIX + "/init-session")):
+        try:
+            _probe(url)
+            report[label + "_reachable"] = True
+        except Exception as exc:
+            report[label + "_reachable"] = False
+            report[label + "_error"] = "{0}: {1}".format(type(exc).__name__, exc)
 
     try:
         report["user_dir"] = paths.user_dir(ctx)

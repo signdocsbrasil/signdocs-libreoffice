@@ -1,23 +1,27 @@
 # SPDX-License-Identifier: MPL-2.0
 """
-SignDocs external-API client.
+Client for the SignDocs LibreOffice add-on tier.
 
-Same contract as the Nextcloud app and the ONLYOFFICE plugin, and the rules
-below are the ones those two learned the hard way:
+The extension talks to `/libreoffice/*`, never to the public `/v1/*` API. The
+add-on Lambdas hold the channel's API credential in Secrets Manager and call
+upstream on our behalf; what travels from here is a Cognito ID token that
+identifies the user and grants no API access on its own.
 
-* one signer is a signing session, two or more is an envelope with a session
-  added per signer, **sequentially** — the order is meaningful;
-* `signerIndex` is 1-based;
-* `policy.profile` takes `DIGITAL_CERTIFICATE` for both A1 and A3.
-  `DIGITAL_SIGN_A1` is a *step type* and 400s as a profile;
-* exactly one of `cpf`/`cnpj` per signer, classified by length, never inferred;
-* the link is `{url}?cs={clientSecret}` — `url` alone is not a link;
-* without `owner`, the API dispatches **no** invite emails at all.
+That indirection moves several rules server-side, and this module must not
+try to reimplement them:
 
-Every create carries an `X-Idempotency-Key`. Quota is one global pool and is
-not refunded on cancel, so a send the user retries after an error must not be
-billed twice — which is why `send()` takes the key rather than minting a fresh
-one each attempt.
+* **`owner` is set by the server** from the verified identity. Sending one
+  from here would be ignored, and the sender field exists only to be recorded
+  and to decide whether an invite goes out.
+* **The signing order can be overridden.** With a certificate profile the
+  server forces SEQUENTIAL, because the A1 path loads the previous signer's
+  output; it reports `signingModeForced` so we can say so.
+* **Idempotency is mandatory.** The server rejects a create without a key
+  rather than silently double-billing a retry.
+
+The public surface — `send`, `status_of`, `cancel`, `signed_pdf`,
+`signed_filename` — is unchanged from the direct-API version on purpose, so
+the whole dialog layer is untouched by this rework.
 """
 
 import hashlib
@@ -28,8 +32,7 @@ import uuid
 from signdocs import config, oauth, validators
 from signdocs.httpclient import HttpError, get_bytes, request
 
-#: UI value -> policy profile. Kept deliberately small: these are the four the
-#: dialog offers, and anything else is a typo rather than a feature.
+#: UI value -> policy profile.
 PROFILES = {
     "click_only": "CLICK_ONLY",
     "click_plus_otp": "CLICK_PLUS_OTP",
@@ -42,8 +45,6 @@ ORDERS = ("PARALLEL", "SEQUENTIAL")
 #: The API enforces this with an explicit 400; fail before the upload.
 MAX_SIGNERS = 100
 
-SOURCE = "libreoffice"
-
 
 class ValidationError(Exception):
     """Caught before anything is sent. Message is user-facing pt-BR."""
@@ -54,38 +55,28 @@ class NotSignedYet(Exception):
 
 
 # ------------------------------------------------------------- transport
-def _api(store, stage):
-    return config.STAGES[stage or config.current_stage(store)]["api"]
-
-
-def _call(store, method, path, payload=None, idempotency_key=None, stage=None):
-    headers = {"Authorization": "Bearer " + oauth.access_token(store, stage)}
-    if idempotency_key:
-        headers["X-Idempotency-Key"] = idempotency_key
-
+def _call(store, method, path, payload=None, stage=None):
+    headers = {"Authorization": "Bearer " + oauth.bearer_token(store, stage)}
     body = None
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
-
-    return request(_api(store, stage) + path, method, body, headers)
+    return request(config.api_base(store, stage) + path, method, body, headers)
 
 
 # --------------------------------------------------------------- signers
 def build_signer(signer, index):
     """
-    Shape one signer for the API.
+    Shape one signer for the add-on tier.
 
     `userExternalId` is a stable hash of the e-mail so a re-send reuses the
-    same identity instead of minting a second one. The `lo:` prefix marks the
-    channel, matching `oo:` in the ONLYOFFICE plugin.
+    same identity rather than minting a second one.
     """
     name = (signer.get("name") or "").strip()
     email = (signer.get("email") or "").strip()
 
     if email:
-        digest = hashlib.sha256(email.lower().encode("utf-8")).hexdigest()
-        external_id = "lo:" + digest
+        external_id = "lo:" + hashlib.sha256(email.lower().encode("utf-8")).hexdigest()
     else:
         external_id = "lo:idx:%d" % index
 
@@ -118,47 +109,37 @@ def validate_signers(signers):
         if not validators.is_valid_email(email):
             raise ValidationError("Signatário %d: e-mail inválido." % position)
         if email.lower() in seen:
-            raise ValidationError(
-                "O e-mail %s aparece mais de uma vez." % email
-            )
+            raise ValidationError("O e-mail %s aparece mais de uma vez." % email)
         seen.add(email.lower())
 
         fiscal = validators.classify(signer.get("fiscal"))
         if fiscal.kind is None:
-            raise ValidationError(
-                "Signatário %d: informe um CPF ou CNPJ." % position
-            )
+            raise ValidationError("Signatário %d: informe um CPF ou CNPJ." % position)
         if not fiscal.valid:
             raise ValidationError(
                 "Signatário %d: %s inválido." % (position, fiscal.kind.upper())
             )
 
 
-def signing_link(payload):
+def signing_link(url, secret):
     """
     Assemble the per-signer link.
 
-    Both halves are required. `url` on its own is not a working link, which is
-    exactly why the Nextcloud app cannot show single-signer links: the PHP
-    SDK's model drops `clientSecret`. Talking raw HTTP, we have both.
+    Both halves are required — `url` alone is not a working link. The add-on
+    tier returns them as separate fields, so the join happens here.
     """
-    url = (payload or {}).get("url")
-    secret = (payload or {}).get("clientSecret")
-    if not url or not secret:
+    if not url:
         return None
+    if not secret:
+        return url
     return url + "?cs=" + urllib.parse.quote(secret, safe="")
-
-
-def _metadata(document):
-    # metadata is Record<string, string>; there is no first-class channel
-    # field on the API, so `source` is how a send is attributed.
-    return {"source": SOURCE, "lo_module": str(document.get("module") or "writer")}
 
 
 def _document(document):
     return {
         "content": document["content"],
         "filename": document.get("filename") or "documento.pdf",
+        "module": document.get("module") or "writer",
     }
 
 
@@ -168,9 +149,15 @@ def send(store, document, signers, profile="click_only", order="PARALLEL",
     """
     Send the document for signature.
 
-    Pass the same `idempotency_key` when retrying a failed send: quota is one
-    global pool and is not refunded on cancel, so a fresh key on every attempt
-    turns a network blip into a double charge.
+    Pass the same `idempotency_key` when retrying a failed send: the server
+    requires one, and quota is a single pool that is not refunded on cancel,
+    so a fresh key on every attempt would turn a network blip into a double
+    charge.
+
+    `owner_email` is accepted for signature compatibility with the dialog
+    layer but is NOT transmitted — the server sets `owner` from the verified
+    Cognito identity, which is what makes the ownership checks downstream
+    meaningful.
 
     Blocking — worker thread only.
     """
@@ -182,25 +169,19 @@ def send(store, document, signers, profile="click_only", order="PARALLEL",
 
     key = idempotency_key or str(uuid.uuid4())
     if len(signers) == 1:
-        return _send_session(store, document, signers, profile, owner_email, key, stage)
-    return _send_envelope(
-        store, document, signers, profile, order, owner_email, key, stage
-    )
+        return _send_session(store, document, signers, profile, key, stage)
+    return _send_envelope(store, document, signers, profile, order, key, stage)
 
 
-def _send_session(store, document, signers, profile, owner_email, key, stage):
-    payload = {
-        "purpose": "DOCUMENT_SIGNATURE",
-        "policy": {"profile": PROFILES[profile]},
-        "signer": build_signer(signers[0], 0),
+def _send_session(store, document, signers, profile, key, stage):
+    result = _call(store, "POST", "/create-signing-session", {
         "document": _document(document),
-        "metadata": _metadata(document),
-        "locale": "pt-BR",
-    }
-    if owner_email:
-        payload["owner"] = {"email": owner_email}
+        "signer": build_signer(signers[0], 0),
+        "policy": {"profile": PROFILES[profile]},
+        "purpose": "DOCUMENT_SIGNATURE",
+        "__idempotencyKey": key,
+    }, stage) or {}
 
-    result = _call(store, "POST", "/v1/signing-sessions", payload, key, stage) or {}
     return {
         "kind": "session",
         "id": result.get("sessionId"),
@@ -208,91 +189,73 @@ def _send_session(store, document, signers, profile, owner_email, key, stage):
         "links": [{
             "signerName": signers[0].get("name"),
             "signerEmail": signers[0].get("email"),
-            "url": signing_link(result),
+            "url": signing_link(result.get("url"), result.get("clientSecret")),
             "inviteSent": bool(result.get("inviteSent")),
         }],
     }
 
 
-def _send_envelope(store, document, signers, profile, order, owner_email, key, stage):
-    payload = {
-        "signingMode": order,
-        "totalSigners": len(signers),
+def _send_envelope(store, document, signers, profile, order, key, stage):
+    result = _call(store, "POST", "/create-envelope", {
         "document": _document(document),
-        "metadata": _metadata(document),
-        "locale": "pt-BR",
-    }
-    if owner_email:
-        payload["owner"] = {"email": owner_email}
+        "signers": [
+            dict(build_signer(s, i), profile=PROFILES[profile])
+            for i, s in enumerate(signers)
+        ],
+        "signingMode": order,
+        "__idempotencyKey": key,
+    }, stage) or {}
 
-    envelope = _call(store, "POST", "/v1/envelopes", payload, key, stage) or {}
-    envelope_id = envelope.get("envelopeId")
-    if not envelope_id:
-        raise HttpError(502, "O servidor não devolveu um envelopeId.")
+    by_email = {}
+    for entry in result.get("signers") or []:
+        by_email[(entry.get("email") or "").lower()] = entry
 
     links = []
-    path = "/v1/envelopes/" + urllib.parse.quote(str(envelope_id), safe="") + "/sessions"
-    # One at a time, never concurrently: in SEQUENTIAL mode the order in which
-    # sessions are added is the signing order.
-    for index, signer in enumerate(signers):
-        session = _call(store, "POST", path, {
-            "signer": build_signer(signer, index),
-            "policy": {"profile": PROFILES[profile]},
-            # 1-based: 1..totalSigners.
-            "signerIndex": index + 1,
-            "purpose": "DOCUMENT_SIGNATURE",
-        }, "%s:%d" % (key, index + 1), stage) or {}
+    for signer in signers:
+        entry = by_email.get((signer.get("email") or "").lower(), {})
         links.append({
             "signerName": signer.get("name"),
             "signerEmail": signer.get("email"),
-            "url": signing_link(session),
-            "inviteSent": bool(session.get("inviteSent")),
+            # The add-on tier returns a ready link; there is no separate
+            # clientSecret to join on this path.
+            "url": entry.get("url"),
+            "inviteSent": bool(entry.get("inviteSent")),
         })
 
     return {
         "kind": "envelope",
-        "id": envelope_id,
+        "id": result.get("envelopeId"),
         "transactionId": None,
         "links": links,
+        # True when the server overrode PARALLEL because a certificate
+        # profile is in play; the UI should say so rather than let the user
+        # believe their choice was honoured.
+        "signingModeForced": bool(result.get("signingModeForced")),
+        "signingMode": result.get("signingMode") or order,
     }
 
 
 # ---------------------------------------------------------------- status
-def session_status(store, session_id, stage=None):
-    return _call(
-        store, "GET",
-        "/v1/signing-sessions/" + urllib.parse.quote(str(session_id), safe="") + "/status",
-        None, None, stage,
-    ) or {}
-
-
-def get_envelope(store, envelope_id, stage=None):
-    return _call(
-        store, "GET",
-        "/v1/envelopes/" + urllib.parse.quote(str(envelope_id), safe=""),
-        None, None, stage,
-    ) or {}
-
-
 def status_of(store, kind, ident, stage=None):
-    """
-    One shape for both flavours, so the tracking dialog does not have to care.
+    """One shape for both flavours, so the tracking dialog need not care."""
+    quoted = urllib.parse.quote(str(ident), safe="")
 
-    Returns {status, completed, total, signed_available, transactionId}.
-    """
     if kind == "envelope":
-        raw = get_envelope(store, ident, stage)
+        raw = _call(store, "GET", "/envelope-status/" + quoted, None, stage) or {}
+        total = raw.get("totalSigners") or 0
+        completed = raw.get("completedSessions") or 0
         return {
             "status": raw.get("status"),
-            "completed": raw.get("completedSessions") or 0,
-            "total": raw.get("totalSigners") or 0,
-            # Only present once the envelope is COMPLETED.
-            "signed_available": bool(raw.get("combinedSignedPdfUrl")),
+            "completed": completed,
+            "total": total,
+            # The add-on tier gates the download itself, so availability is
+            # simply "everything is done".
+            "signed_available": raw.get("status") == "COMPLETED",
             "transactionId": None,
             "raw": raw,
         }
 
-    raw = session_status(store, ident, stage)
+    raw = _call(store, "GET", "/session-status/" + quoted, None, stage) or {}
     status = raw.get("status")
     return {
         "status": status,
@@ -309,34 +272,28 @@ def signed_pdf(store, kind, ident, transaction_id=None, stage=None):
     """
     Fetch the signed PDF as bytes.
 
-    Both paths end at a presigned S3 URL, which is fetched with no
-    Authorization header — S3 rejects a request carrying both a query
-    signature and an auth header.
+    The add-on tier returns a presigned URL rather than the bytes, so a large
+    document never travels through Lambda. It refuses to hand back the
+    unsigned original, so a 409 here genuinely means "not signed yet" — the
+    caller can trust that distinction.
     """
-    if kind == "envelope":
-        raw = get_envelope(store, ident, stage)
-        url = raw.get("combinedSignedPdfUrl")
-        if not url:
+    quoted = urllib.parse.quote(str(ident), safe="")
+    path = ("/signed-document/envelope/" + quoted) if kind == "envelope" \
+        else ("/signed-document/" + quoted)
+
+    try:
+        result = _call(store, "GET", path, None, stage) or {}
+    except HttpError as exc:
+        if exc.status in (404, 409):
             raise NotSignedYet(
-                "O documento combinado ainda não está disponível. "
-                "Ele é gerado quando todos os signatários concluem."
+                "O documento assinado ainda não está disponível."
             )
-        return get_bytes(url)
+        raise
 
-    tx = transaction_id
-    if not tx:
-        tx = session_status(store, ident, stage).get("transactionId")
-    if not tx:
-        raise NotSignedYet("Ainda não há documento assinado para este envio.")
-
-    result = _call(
-        store, "GET",
-        "/v1/transactions/" + urllib.parse.quote(str(tx), safe="") + "/download",
-        None, None, stage,
-    ) or {}
     url = result.get("signedUrl")
     if not url:
-        raise NotSignedYet("Ainda não há documento assinado para este envio.")
+        raise NotSignedYet("O documento assinado ainda não está disponível.")
+    # Presigned: fetched with no Authorization header, or S3 rejects it.
     return get_bytes(url)
 
 
@@ -353,35 +310,36 @@ def cancel(store, kind, ident, stage=None):
     """
     Cancel a send.
 
-    The two endpoints disagree about repeat calls — envelope cancel is
-    idempotent and returns `alreadyCancelled`, session cancel raises 409 for
-    any status other than ACTIVE — so both are normalised to the same shape.
-    A 409 is treated as success because "already cancelled" is the outcome the
-    user asked for.
-
-    Signatures already collected are preserved, not destroyed; the count comes
-    back in `preservedSignedCount` and the UI should say so.
+    Both endpoints are normalised to one shape. Signatures already collected
+    are preserved, not destroyed; the count comes back in
+    `preservedSignedCount` and the UI should say so.
     """
-    if kind == "envelope":
-        path = "/v1/envelopes/" + urllib.parse.quote(str(ident), safe="") + "/cancel"
-        result = _call(store, "POST", path,
-                       {"reason": "cancelled_via_libreoffice"}, None, stage) or {}
-        return {
-            "alreadyCancelled": bool(result.get("alreadyCancelled")),
-            "cancelledCount": result.get("cancelledCount") or 0,
-            "preservedSignedCount": result.get("preservedSignedCount") or 0,
-        }
+    quoted = urllib.parse.quote(str(ident), safe="")
+    path = ("/cancel-envelope/" + quoted) if kind == "envelope" \
+        else ("/cancel-session/" + quoted)
 
-    path = "/v1/signing-sessions/" + urllib.parse.quote(str(ident), safe="") + "/cancel"
     try:
-        result = _call(store, "POST", path, None, None, stage) or {}
+        result = _call(store, "POST", path, {}, stage) or {}
     except HttpError as exc:
-        if exc.status == 409:
+        # Session cancel 409s when the session is not ACTIVE, which is the
+        # outcome the user asked for. A 404 means it has already gone.
+        if exc.status in (404, 409):
             return {"alreadyCancelled": True, "cancelledCount": 0,
                     "preservedSignedCount": 0}
         raise
+
     return {
         "alreadyCancelled": bool(result.get("alreadyCancelled")),
-        "cancelledCount": result.get("cancelledCount") or 1,
+        "cancelledCount": result.get("cancelledCount") or 0,
         "preservedSignedCount": result.get("preservedSignedCount") or 0,
     }
+
+
+def init_session(store, stage=None):
+    """
+    Register the user with the channel-quota service and read their plan.
+
+    Called once after sign-in so the UI can show the remaining allowance
+    before the user builds a whole send they have no quota for.
+    """
+    return _call(store, "POST", "/init-session", {}, stage) or {}

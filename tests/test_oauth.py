@@ -1,18 +1,21 @@
 # SPDX-License-Identifier: MPL-2.0
 """
-The authorization flow.
+Sign-in against Cognito managed login.
 
-Two behaviours here are worth more than the rest put together, and both are
-asserted directly rather than inferred:
+Two behaviours are worth more than the rest, and both are asserted directly:
 
-* the rotated refresh token reaches the profile **before** the access token is
-  armed — the server has already invalidated the presented one, so the reverse
-  order turns a crash into a permanent logout;
-* a refresh that fails because the machine is offline must **not** discard the
-  refresh token, while one the server rejects must.
+* the **ID** token is what gets cached and presented, not the access token —
+  only the ID token carries the email claim the add-on tier resolves identity
+  from, so caching the wrong one fails at every call site with a confusing
+  message;
+* a refresh that returns **no** `refresh_token` must leave the stored one
+  alone. Cognito does not rotate refresh tokens and simply omits the field,
+  so writing that absence through would delete a working token and force a
+  fresh sign-in. This is the exact inverse of the previous broker's rule, and
+  the most likely thing to get wrong when porting.
 
-The loopback leg runs for real against a bound socket rather than a mock, so
-the handler, the port selection and the state check are exercised as shipped.
+The loopback leg runs against a real bound socket rather than a mock, so the
+handler, port selection and state check are exercised as shipped.
 """
 
 import base64
@@ -31,16 +34,25 @@ from signdocs.store import JsonStore
 
 @pytest.fixture(autouse=True)
 def _clear_token_cache():
-    oauth._access_tokens.clear()
+    oauth._tokens.clear()
     yield
-    oauth._access_tokens.clear()
+    oauth._tokens.clear()
 
 
 @pytest.fixture
 def store():
-    s = JsonStore()
-    s.set(config.stage_key("client_id", "prod"), "dcr_test")
-    return s
+    return JsonStore()
+
+
+def tokens(**over):
+    payload = {
+        "id_token": "id-1",
+        "access_token": "at-1",
+        "refresh_token": "rt-1",
+        "expires_in": 3600,
+    }
+    payload.update(over)
+    return payload
 
 
 # ------------------------------------------------------------------- PKCE
@@ -51,13 +63,11 @@ def test_verifier_meets_rfc7636_length():
 
 
 def test_challenge_is_unpadded_base64url_sha256():
-    verifier = "abc123"
     expected = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode()).digest()
+        hashlib.sha256(b"abc123").digest()
     ).decode().rstrip("=")
-    assert oauth.challenge_for(verifier) == expected
-    # Padding would be rejected: the server compares the string it was given.
-    assert "=" not in oauth.challenge_for(verifier)
+    assert oauth.challenge_for("abc123") == expected
+    assert "=" not in oauth.challenge_for("abc123")
 
 
 def test_state_round_trips():
@@ -72,55 +82,27 @@ def test_unpack_state_rejects_a_non_object():
         oauth.unpack_state(packed)
 
 
-def test_authorize_url_carries_everything_the_server_requires():
-    url = oauth.authorize_url(
-        config.STAGES["prod"], "dcr_x", "http://127.0.0.1:8712/callback", "chal", "st"
-    )
+# -------------------------------------------------------- authorize URL
+def test_authorize_url_targets_our_own_login_domain():
+    url = oauth.authorize_url("http://127.0.0.1:8712/callback", "chal", "st")
     query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
-    assert url.startswith("https://auth.signdocs.com.br/oauth2/authorize?")
+
+    # Users type their password here, so it must be our hostname and not an
+    # amazoncognito.com one.
+    assert url.startswith("https://login.signdocs.com.br/oauth2/authorize?")
+    assert query["client_id"] == [config.COGNITO["client_id"]]
     assert query["response_type"] == ["code"]
-    assert query["client_id"] == ["dcr_x"]
     assert query["redirect_uri"] == ["http://127.0.0.1:8712/callback"]
-    assert query["code_challenge"] == ["chal"]
-    # The server advertises S256 only; `plain` is not offered and must never
-    # be sent.
     assert query["code_challenge_method"] == ["S256"]
-    assert query["scope"] == [" ".join(config.SCOPES)]
+    # `email` is the claim the add-on tier resolves identity from.
+    assert "email" in query["scope"][0].split()
+    assert "openid" in query["scope"][0].split()
 
 
-# ---------------------------------------------------------- registration
-def test_registration_happens_once_and_is_cached(monkeypatch):
-    calls = []
-
-    def fake_post_json(url, payload, headers=None, timeout=None):
-        calls.append(payload)
-        return {"client_id": "dcr_abc"}
-
-    monkeypatch.setattr(oauth, "post_json", fake_post_json)
-    s = JsonStore()
-
-    assert oauth.ensure_client_id(s, "prod") == "dcr_abc"
-    assert oauth.ensure_client_id(s, "prod") == "dcr_abc"
-    assert len(calls) == 1, "a cached client id must not re-register"
-
-    # Every candidate port is registered up front, because authorize.ts
-    # exact-matches the redirect URI including the port.
-    assert calls[0]["redirect_uris"] == config.redirect_uris()
-    assert len(calls[0]["redirect_uris"]) == len(config.LOOPBACK_PORTS)
-
-
-def test_registration_is_namespaced_per_stage(monkeypatch):
-    monkeypatch.setattr(
-        oauth, "post_json",
-        lambda url, payload, headers=None, timeout=None: {
-            "client_id": "dcr_" + ("hml" if "hml" in url else "prod")
-        },
-    )
-    s = JsonStore()
-    assert oauth.ensure_client_id(s, "prod") == "dcr_prod"
-    assert oauth.ensure_client_id(s, "hml") == "dcr_hml"
-    assert s.get(config.stage_key("client_id", "prod")) == "dcr_prod"
-    assert s.get(config.stage_key("client_id", "hml")) == "dcr_hml"
+def test_login_is_stage_independent():
+    # One Cognito pool serves prod and hml; only the add-on API differs.
+    assert "hml" not in config.COGNITO["domain"]
+    assert config.STAGES["prod"]["api"] != config.STAGES["hml"]["api"]
 
 
 # ------------------------------------------------------------- loopback
@@ -168,32 +150,33 @@ def test_connect_completes_against_a_real_loopback_socket(monkeypatch, store):
     exchanged = {}
 
     def fake_post_form(url, fields, headers=None, timeout=None):
+        exchanged["url"] = url
         exchanged.update(fields)
-        return {"access_token": "at-1", "refresh_token": "rt-1", "expires_in": 900}
+        return tokens()
 
     monkeypatch.setattr(oauth, "post_form", fake_post_form)
 
     token = oauth.connect(store, "prod", open_browser=_drive_browser, timeout=15)
 
-    assert token == "at-1"
+    # The ID token, not the access token.
+    assert token == "id-1"
+    assert exchanged["url"] == "https://login.signdocs.com.br/oauth2/token"
     assert exchanged["grant_type"] == "authorization_code"
     assert exchanged["code"] == "auth-code-1"
-    assert exchanged["client_id"] == "dcr_test"
+    assert exchanged["client_id"] == config.COGNITO["client_id"]
     # PKCE: the verifier, not the challenge, goes to the token endpoint.
     assert len(exchanged["code_verifier"]) >= 43
     assert exchanged["redirect_uri"].startswith("http://127.0.0.1:")
+    # No client_secret: this is a public client and cannot hold one.
+    assert "client_secret" not in exchanged
     assert store.get(config.stage_key("refresh_token", "prod")) == "rt-1"
 
 
 def test_connect_rejects_a_mismatched_state(monkeypatch, store):
-    monkeypatch.setattr(
-        oauth, "post_form",
-        lambda *a, **k: pytest.fail("must not reach the token endpoint"),
-    )
+    monkeypatch.setattr(oauth, "post_form",
+                        lambda *a, **k: pytest.fail("must not reach the token endpoint"))
 
     def hostile_browser(url):
-        # An unsolicited hit on the loopback port must not be able to feed us
-        # a code.
         _drive_browser(
             url.replace("state=", "state=" + oauth.pack_state("wrong") + "&ignored="),
             {"code": "attacker-code"},
@@ -203,21 +186,17 @@ def test_connect_rejects_a_mismatched_state(monkeypatch, store):
         oauth.connect(store, "prod", open_browser=hostile_browser, timeout=15)
 
 
-def test_connect_surfaces_a_denied_consent(monkeypatch, store):
-    monkeypatch.setattr(
-        oauth, "post_form",
-        lambda *a, **k: pytest.fail("must not reach the token endpoint"),
-    )
+def test_connect_surfaces_a_cancelled_login(monkeypatch, store):
+    monkeypatch.setattr(oauth, "post_form",
+                        lambda *a, **k: pytest.fail("must not reach the token endpoint"))
 
     def denying_browser(url):
-        _drive_browser(url, {
-            "error": "access_denied",
-            "error_description": "Autorização negada pelo usuário.",
-        })
+        _drive_browser(url, {"error": "access_denied",
+                             "error_description": "Login cancelado."})
 
     with pytest.raises(oauth.AuthorizationFailed) as excinfo:
         oauth.connect(store, "prod", open_browser=denying_browser, timeout=15)
-    assert "negada" in str(excinfo.value)
+    assert "cancelado" in str(excinfo.value)
 
 
 def test_connect_times_out_without_a_callback(monkeypatch, store):
@@ -226,48 +205,52 @@ def test_connect_times_out_without_a_callback(monkeypatch, store):
         oauth.connect(store, "prod", open_browser=lambda url: None, timeout=1)
 
 
+def test_connect_requires_an_id_token(monkeypatch, store):
+    # An access token alone is useless: it carries no email claim, so the
+    # add-on tier would reject every subsequent call.
+    monkeypatch.setattr(oauth, "post_form",
+                        lambda *a, **k: tokens(id_token=None))
+    with pytest.raises(oauth.AuthorizationFailed):
+        oauth.connect(store, "prod", open_browser=_drive_browser, timeout=15)
+
+
 # --------------------------------------------------------------- refresh
-def test_rotated_refresh_token_is_persisted_before_the_access_token_is_armed():
+def test_a_refresh_without_a_new_refresh_token_keeps_the_stored_one(monkeypatch, store):
     """
-    The ordering guarantee. token.ts deletes the presented refresh token the
-    moment it issues a replacement, so if the process dies after we start
-    using the new access token but before the new refresh token is on disk,
-    the user can never reconnect without re-consenting.
+    The inverse of the previous broker's rule, and the easiest thing to get
+    wrong when porting. Cognito does not rotate refresh tokens: it omits the
+    field entirely. Writing that absence through would delete a working token
+    and force a fresh sign-in on the next launch.
     """
-    observed = {}
+    store.set(config.stage_key("refresh_token", "prod"), "rt-original")
+    monkeypatch.setattr(oauth, "post_form",
+                        lambda *a, **k: tokens(refresh_token=None, id_token="id-2"))
 
-    class OrderSpy(JsonStore):
-        def set(self, key, value):
-            if key.startswith(config.STORAGE["refresh_token"]):
-                observed["armed_at_write_time"] = "prod" in oauth._access_tokens
-            JsonStore.set(self, key, value)
+    assert oauth.refresh(store, "prod") == "id-2"
+    assert store.get(config.stage_key("refresh_token", "prod")) == "rt-original"
 
-    spy = OrderSpy()
-    oauth._remember(spy, "prod", {
-        "access_token": "at", "refresh_token": "rt", "expires_in": 900,
-    })
 
-    assert observed["armed_at_write_time"] is False
-    assert spy.get(config.stage_key("refresh_token", "prod")) == "rt"
-    assert oauth._access_tokens["prod"][0] == "at"
+def test_a_rotated_refresh_token_is_still_persisted_if_one_arrives(monkeypatch, store):
+    store.set(config.stage_key("refresh_token", "prod"), "rt-old")
+    monkeypatch.setattr(oauth, "post_form",
+                        lambda *a, **k: tokens(refresh_token="rt-new"))
+    oauth.refresh(store, "prod")
+    assert store.get(config.stage_key("refresh_token", "prod")) == "rt-new"
 
 
 def test_expiry_is_shortened_by_the_skew():
-    oauth._remember(JsonStore(), "prod", {"access_token": "at", "expires_in": 900})
-    _, expires_at = oauth._access_tokens["prod"]
     import time as _time
+    oauth._remember(JsonStore(), "prod", tokens(expires_in=3600))
+    _, expires_at = oauth._tokens["prod"]
     remaining = expires_at - _time.time()
-    # 900s nominal, refreshed 60s early.
-    assert 830 < remaining <= 840
+    # 3600s nominal, refreshed 60s early.
+    assert 3530 < remaining <= 3540
 
 
 def test_a_rejected_refresh_token_is_discarded(monkeypatch, store):
     store.set(config.stage_key("refresh_token", "prod"), "rt-dead")
-
-    def reject(*a, **k):
-        raise HttpError(400, "invalid_grant", {"error": "invalid_grant"})
-
-    monkeypatch.setattr(oauth, "post_form", reject)
+    monkeypatch.setattr(oauth, "post_form", lambda *a, **k: (_ for _ in ()).throw(
+        HttpError(400, "invalid_grant", {"error": "invalid_grant"})))
 
     with pytest.raises(oauth.NotConnected):
         oauth.refresh(store, "prod")
@@ -277,11 +260,8 @@ def test_a_rejected_refresh_token_is_discarded(monkeypatch, store):
 
 def test_an_offline_refresh_keeps_the_token(monkeypatch, store):
     store.set(config.stage_key("refresh_token", "prod"), "rt-good")
-
-    def offline(*a, **k):
-        raise NetworkError("dns failure")
-
-    monkeypatch.setattr(oauth, "post_form", offline)
+    monkeypatch.setattr(oauth, "post_form", lambda *a, **k: (_ for _ in ()).throw(
+        NetworkError("dns failure")))
 
     with pytest.raises(NetworkError):
         oauth.refresh(store, "prod")
@@ -295,25 +275,23 @@ def test_refresh_without_a_stored_token_reports_not_connected(store):
         oauth.refresh(store, "prod")
 
 
-def test_access_token_uses_the_cache_then_refreshes(monkeypatch, store):
+def test_bearer_token_uses_the_cache_then_refreshes(monkeypatch, store):
     store.set(config.stage_key("refresh_token", "prod"), "rt-1")
     calls = []
 
     def fake_post_form(url, fields, headers=None, timeout=None):
         calls.append(fields)
-        return {"access_token": "at-%d" % len(calls), "refresh_token": "rt-next",
-                "expires_in": 900}
+        return tokens(id_token="id-%d" % len(calls), refresh_token=None)
 
     monkeypatch.setattr(oauth, "post_form", fake_post_form)
 
-    assert oauth.access_token(store, "prod") == "at-1"
-    assert oauth.access_token(store, "prod") == "at-1"
+    assert oauth.bearer_token(store, "prod") == "id-1"
+    assert oauth.bearer_token(store, "prod") == "id-1"
     assert len(calls) == 1, "a live cached token must not trigger a refresh"
     assert calls[0]["grant_type"] == "refresh_token"
 
-    # Expire it and the next call refreshes.
-    oauth._access_tokens["prod"] = ("at-1", 0)
-    assert oauth.access_token(store, "prod") == "at-2"
+    oauth._tokens["prod"] = ("id-1", 0)
+    assert oauth.bearer_token(store, "prod") == "id-2"
 
 
 def test_connected_state_and_disconnect(store):

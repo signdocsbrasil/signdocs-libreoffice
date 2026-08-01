@@ -1,24 +1,29 @@
 # SPDX-License-Identifier: MPL-2.0
 """
-OAuth 2.1 authorization-code + PKCE, RFC 8252 native-app style.
+Sign-in against the SignDocs account, RFC 8252 native-app style.
 
-The extension is a **public client**: it ships no secret and cannot keep one.
-Instead it registers itself once via RFC 7591 Dynamic Client Registration,
-then runs the authorization-code flow with PKCE S256 against a transient
-loopback listener.
+The user authenticates on **login.signdocs.com.br** — Cognito managed login on
+our own domain — and the extension receives an ID token. That token identifies
+the person; it grants no API access on its own. Everything the extension then
+calls goes to the `/libreoffice/*` add-on tier, which holds the API credential
+server-side in Secrets Manager. Nothing secret ships in this file.
 
-Three properties of the authorization server shape this file, and none of them
-are guesses — they are what `external-api/src/handlers/oauth/` actually does:
+Differences from the SignDocs OAuth broker this module used to target, all of
+which simplify it:
 
-* `register.ts` accepts loopback redirect URIs over http. That is what lets a
-  desktop app skip the CDN-hosted callback page the ONLYOFFICE plugin needs.
-* `authorize.ts` **exact-matches the redirect URI including the port**. RFC 8252
-  §7.3 port-agnostic loopback matching is not implemented, so every candidate
-  port is registered up front in one DCR call and we bind whichever is free.
-  Registering per launch instead would grow OAUTH_DCR# records without bound.
-* `token.ts` rotates the refresh token on every use and deletes the presented
-  one immediately. Persist the new one *before* using the new access token, or
-  a crash in between logs the user out for good.
+* **No Dynamic Client Registration.** Cognito implements no RFC 7591, so the
+  client id is fixed and shipped. That is safe precisely because it is a public
+  client with no secret — the id is not a credential.
+* **Every loopback port is pre-registered** on the app client, so the exact
+  redirect URI still matches whichever port turns out to be free. Cognito
+  honours `http://127.0.0.1:<port>/callback` despite the documentation
+  suggesting `http://localhost` is the only HTTP exception; that was verified
+  against a real managed-login domain rather than inferred.
+* **Refresh tokens are not rotated.** Our broker replaced the refresh token on
+  every use, so the new one had to reach disk before the new access token was
+  used. Cognito reuses it and simply omits `refresh_token` from the refresh
+  response, so the rule here is the opposite: never overwrite a stored token
+  with an absent one.
 """
 
 import base64
@@ -31,31 +36,26 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from signdocs import config
-from signdocs.httpclient import HttpError, NetworkError, get_json, post_form, post_json
+from signdocs.httpclient import HttpError, NetworkError, post_form
 
-#: How long to wait for the user to finish consenting. Matches the 300s
-#: single-use lifetime of the authorization code — waiting longer would only
-#: collect a code the server has already expired.
+#: How long to wait for the user to finish signing in.
 CONSENT_TIMEOUT = 300
 
-#: Refresh this many seconds before nominal expiry, so a request cannot start
-#: with a token that expires mid-flight. Access tokens live 900s.
+#: Refresh this many seconds before nominal expiry so a request cannot start
+#: with a token that expires mid-flight.
 EXPIRY_SKEW = 60
 
-CLIENT_NAME = "SignDocs Brasil para LibreOffice"
-
-#: Access tokens are held in memory only, never written to the profile, keyed
-#: by stage. This cache has a real expiry (unlike the module-scope secrets
-#: cache in external-api that needed a manual bust), so it cannot go stale.
-_access_tokens = {}
+#: ID tokens live in memory only, keyed by stage. The cache has a real expiry,
+#: so it cannot go stale.
+_tokens = {}
 
 
 class NotConnected(Exception):
-    """No usable credentials. The caller should offer to connect."""
+    """No usable credentials. The caller should offer to sign in."""
 
 
 class AuthorizationFailed(Exception):
-    """The user denied consent, or the callback never arrived."""
+    """The user cancelled, or the callback never arrived."""
 
 
 class NoFreePort(Exception):
@@ -82,8 +82,7 @@ def pack_state(nonce):
 
 def unpack_state(packed):
     padding = "=" * (-len(packed) % 4)
-    raw = base64.urlsafe_b64decode(packed + padding)
-    value = json.loads(raw.decode("utf-8"))
+    value = json.loads(base64.urlsafe_b64decode(packed + padding).decode("utf-8"))
     if not isinstance(value, dict):
         raise ValueError("state is not an object")
     return value
@@ -112,8 +111,8 @@ class _CallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API name
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path != config.LOOPBACK_PATH:
-            # Browsers cheerfully ask for /favicon.ico on the way past; that
-            # must not be mistaken for the callback.
+            # Browsers ask for /favicon.ico on the way past; that must not be
+            # mistaken for the callback and end the wait with no code.
             self.send_response(404)
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -123,9 +122,9 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         self.server.signdocs_result = {k: v[0] for k, v in params.items() if v}
 
         headline = (
-            "Autorização negada."
+            "Não foi possível entrar."
             if "error" in self.server.signdocs_result
-            else "Autorização concluída."
+            else "Login concluído."
         )
         body = (_CLOSE_PAGE % {"headline": headline}).encode("utf-8")
         self.send_response(200)
@@ -135,8 +134,8 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, fmt, *args):
-        # The default implementation writes to stderr, which on Windows means
-        # a console window nobody asked for.
+        # The default writes to stderr, which on Windows means a console
+        # window nobody asked for.
         pass
 
 
@@ -145,8 +144,7 @@ def _bind_loopback():
     Bind the first free registered port.
 
     Bound to 127.0.0.1 explicitly, never 0.0.0.0: this socket briefly receives
-    an authorization code, and nothing outside the machine has any business
-    reaching it.
+    an authorization code and nothing off-machine has any business reaching it.
     """
     last = None
     for port in config.LOOPBACK_PORTS:
@@ -171,71 +169,30 @@ def _await_callback(server, timeout, now=time.time):
     return server.signdocs_result
 
 
-# ------------------------------------------------------------ registration
-def ensure_client_id(store, stage=None, endpoints=None):
-    """
-    Register once per stage and cache the id forever.
-
-    The client id is public by construction — the server issues no secret and
-    advertises `token_endpoint_auth_methods_supported: ["none"]` — so caching
-    it in the profile costs nothing.
-    """
-    stage = stage or config.current_stage(store)
-    endpoints = endpoints or config.STAGES[stage]
-    key = config.stage_key("client_id", stage)
-
-    try:
-        existing = store.get(key)
-    except Exception:
-        existing = None
-    if existing:
-        return existing
-
-    payload = post_json(
-        endpoints["auth"] + "/oauth2/register",
-        {
-            "client_name": CLIENT_NAME,
-            # Every candidate port, because the server exact-matches the
-            # redirect URI and we cannot know which one will be free.
-            "redirect_uris": config.redirect_uris(),
-            "scope": " ".join(config.SCOPES),
-        },
-    )
-    client_id = (payload or {}).get("client_id")
-    if not client_id:
-        raise AuthorizationFailed("O servidor não devolveu um client_id.")
-
-    try:
-        store.set(key, client_id)
-    except Exception:
-        # Losing the cache means re-registering next launch. Annoying, not
-        # fatal, and not worth failing a connection the user asked for.
-        pass
-    return client_id
-
-
-def authorize_url(endpoints, client_id, redirect_uri, challenge, state):
+# ------------------------------------------------------------------ tokens
+def authorize_url(redirect_uri, challenge, state):
     query = urllib.parse.urlencode({
         "response_type": "code",
-        "client_id": client_id,
+        "client_id": config.COGNITO["client_id"],
         "redirect_uri": redirect_uri,
-        "scope": " ".join(config.SCOPES),
+        "scope": " ".join(config.COGNITO["scopes"]),
         "state": state,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     })
-    return endpoints["auth"] + "/oauth2/authorize?" + query
+    return config.COGNITO["domain"] + "/oauth2/authorize?" + query
 
 
-# ------------------------------------------------------------------ tokens
 def _remember(store, stage, tokens):
     """
-    Persist the refresh token, then arm the access token.
+    Cache the ID token and persist the refresh token.
 
-    Order matters and is the whole point: the server has already invalidated
-    the refresh token we presented, so if the process dies between here and
-    the next launch without the replacement on disk, the user is logged out
-    permanently.
+    The add-on tier verifies an **ID** token — it is the only one carrying the
+    email claim — so that is what gets cached and sent.
+
+    Cognito omits `refresh_token` from a refresh response because it does not
+    rotate them. Writing that absence through would delete a perfectly good
+    token and force a fresh sign-in on the next launch.
     """
     refresh = tokens.get("refresh_token")
     if refresh:
@@ -243,19 +200,19 @@ def _remember(store, stage, tokens):
             store.set(config.stage_key("refresh_token", stage), refresh)
         except Exception:
             # A read-only profile costs the user their session at next launch,
-            # but throwing away a working access token now helps nobody.
+            # but discarding a working token now helps nobody.
             pass
 
-    access = tokens.get("access_token")
-    if not access:
-        raise AuthorizationFailed("O servidor não devolveu um access_token.")
+    id_token = tokens.get("id_token")
+    if not id_token:
+        raise AuthorizationFailed("O servidor não devolveu um id_token.")
     expires_in = tokens.get("expires_in") or 0
-    _access_tokens[stage] = (access, time.time() + max(0, expires_in - EXPIRY_SKEW))
-    return access
+    _tokens[stage] = (id_token, time.time() + max(0, expires_in - EXPIRY_SKEW))
+    return id_token
 
 
 def _forget(store, stage):
-    _access_tokens.pop(stage, None)
+    _tokens.pop(stage, None)
     try:
         store.delete(config.stage_key("refresh_token", stage))
     except Exception:
@@ -264,14 +221,12 @@ def _forget(store, stage):
 
 def connect(store, stage=None, open_browser=None, timeout=CONSENT_TIMEOUT):
     """
-    Run the full interactive flow. Blocking — call it from a worker thread,
-    never from the office's dispatch thread.
+    Run the interactive sign-in. Blocking — worker thread only, never the
+    office's dispatch thread.
     """
     stage = stage or config.current_stage(store)
-    endpoints = config.STAGES[stage]
     open_browser = open_browser or webbrowser.open
 
-    client_id = ensure_client_id(store, stage, endpoints)
     server, port = _bind_loopback()
     try:
         redirect_uri = config.redirect_uri(port)
@@ -279,41 +234,36 @@ def connect(store, stage=None, open_browser=None, timeout=CONSENT_TIMEOUT):
         nonce = secrets.token_urlsafe(16)
         state = pack_state(nonce)
 
-        open_browser(authorize_url(
-            endpoints, client_id, redirect_uri, challenge_for(verifier), state
-        ))
-
+        open_browser(authorize_url(redirect_uri, challenge_for(verifier), state))
         result = _await_callback(server, timeout)
     finally:
         server.server_close()
 
     if result is None:
         raise AuthorizationFailed(
-            "A autorização não foi concluída dentro de %d segundos." % timeout
+            "O login não foi concluído dentro de %d segundos." % timeout
         )
 
-    # Check the nonce before looking at anything else: an unsolicited request
-    # to the loopback port must not be able to feed us a code.
+    # Check the nonce before anything else: an unsolicited request to the
+    # loopback port must not be able to feed us a code.
     try:
         returned = unpack_state(result.get("state", ""))
     except Exception:
-        raise AuthorizationFailed("Resposta de autorização inválida.")
+        raise AuthorizationFailed("Resposta de login inválida.")
     if returned.get("n") != nonce:
-        raise AuthorizationFailed("Resposta de autorização inválida.")
+        raise AuthorizationFailed("Resposta de login inválida.")
 
     if result.get("error"):
-        raise AuthorizationFailed(
-            result.get("error_description") or result["error"]
-        )
+        raise AuthorizationFailed(result.get("error_description") or result["error"])
     code = result.get("code")
     if not code:
-        raise AuthorizationFailed("Resposta de autorização inválida.")
+        raise AuthorizationFailed("Resposta de login inválida.")
 
-    tokens = post_form(endpoints["auth"] + "/oauth2/token", {
+    tokens = post_form(config.COGNITO["domain"] + "/oauth2/token", {
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": redirect_uri,
-        "client_id": client_id,
+        "client_id": config.COGNITO["client_id"],
         "code_verifier": verifier,
     })
     return _remember(store, stage, tokens or {})
@@ -321,7 +271,6 @@ def connect(store, stage=None, open_browser=None, timeout=CONSENT_TIMEOUT):
 
 def refresh(store, stage=None):
     stage = stage or config.current_stage(store)
-    endpoints = config.STAGES[stage]
 
     try:
         token = store.get(config.stage_key("refresh_token", stage))
@@ -330,37 +279,33 @@ def refresh(store, stage=None):
     if not token:
         raise NotConnected("Não conectado.")
 
-    client_id = None
     try:
-        client_id = store.get(config.stage_key("client_id", stage))
-    except Exception:
-        pass
-    if not client_id:
-        raise NotConnected("Registro do cliente perdido.")
-
-    try:
-        tokens = post_form(endpoints["auth"] + "/oauth2/token", {
+        tokens = post_form(config.COGNITO["domain"] + "/oauth2/token", {
             "grant_type": "refresh_token",
             "refresh_token": token,
-            "client_id": client_id,
+            "client_id": config.COGNITO["client_id"],
         })
     except HttpError:
-        # The server rejected it, so it is dead — keeping it would only
-        # produce the same failure on every later call.
+        # Rejected by Cognito, so it is dead — keeping it would reproduce the
+        # same failure on every later call.
         _forget(store, stage)
-        raise NotConnected("Sessão expirada. Conecte-se novamente.")
+        raise NotConnected("Sessão expirada. Entre novamente.")
     except NetworkError:
-        # Offline is not the same as unauthorised: the token may still be
-        # perfectly good, so do NOT discard it.
+        # Offline is not unauthorised: the token may be perfectly good, so do
+        # NOT discard it.
         raise
 
     return _remember(store, stage, tokens or {})
 
 
-def access_token(store, stage=None):
-    """Valid access token, refreshing when the cached one is stale."""
+def bearer_token(store, stage=None):
+    """
+    A valid ID token for the add-on API, refreshing when the cached one is
+    stale. Named for what it is used as, not for Cognito's `access_token` —
+    which carries no email and would be rejected by the identity resolver.
+    """
     stage = stage or config.current_stage(store)
-    cached = _access_tokens.get(stage)
+    cached = _tokens.get(stage)
     if cached and cached[1] > time.time():
         return cached[0]
     return refresh(store, stage)
@@ -368,7 +313,7 @@ def access_token(store, stage=None):
 
 def is_connected(store, stage=None):
     stage = stage or config.current_stage(store)
-    if _access_tokens.get(stage):
+    if _tokens.get(stage):
         return True
     try:
         return bool(store.get(config.stage_key("refresh_token", stage)))
@@ -378,8 +323,3 @@ def is_connected(store, stage=None):
 
 def disconnect(store, stage=None):
     _forget(store, stage or config.current_stage(store))
-
-
-def discover(endpoints):
-    """RFC 8414 metadata. Used by the settings dialog's connectivity check."""
-    return get_json(endpoints["auth"] + "/.well-known/oauth-authorization-server")

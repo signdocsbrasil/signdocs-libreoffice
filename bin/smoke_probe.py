@@ -145,12 +145,13 @@ def main():
             print("      stage:         %s" % report.get("stage"))
             # Connectivity is reported, never required: CI and air-gapped
             # machines are both legitimate places to run this.
-            if report.get("auth_reachable"):
-                print("      auth:          reachable, issuer %s"
-                      % report.get("auth_issuer"))
-            else:
-                print("      auth:          UNREACHABLE (%s)"
-                      % report.get("auth_error"))
+            for label in ("login", "api"):
+                if report.get(label + "_reachable"):
+                    print("      %-14s reachable  %s"
+                          % (label + ":", report.get(label + "_host", "")))
+                else:
+                    print("      %-14s UNREACHABLE (%s)"
+                          % (label + ":", report.get(label + "_error")))
     finally:
         doc.close(False)
 
