@@ -170,8 +170,15 @@ def _await_callback(server, timeout, now=time.time):
 
 
 # ------------------------------------------------------------------ tokens
-def authorize_url(redirect_uri, challenge, state):
-    query = urllib.parse.urlencode({
+def authorize_url(redirect_uri, challenge, state, lang=None):
+    """
+    Build the managed-login URL.
+
+    `lang` localises the sign-in page. A Brazilian user meeting an English
+    login form on their way into a Brazilian e-signature product is a jarring
+    first impression, and it is one query parameter to avoid.
+    """
+    params = {
         "response_type": "code",
         "client_id": config.COGNITO["client_id"],
         "redirect_uri": redirect_uri,
@@ -179,8 +186,9 @@ def authorize_url(redirect_uri, challenge, state):
         "state": state,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
-    })
-    return config.COGNITO["domain"] + "/oauth2/authorize?" + query
+        "lang": lang or config.DEFAULT_LOGIN_LANG,
+    }
+    return config.COGNITO["domain"] + "/oauth2/authorize?" + urllib.parse.urlencode(params)
 
 
 def _remember(store, stage, tokens):
@@ -219,10 +227,14 @@ def _forget(store, stage):
         pass
 
 
-def connect(store, stage=None, open_browser=None, timeout=CONSENT_TIMEOUT):
+def connect(store, stage=None, open_browser=None, timeout=CONSENT_TIMEOUT,
+            lang=None):
     """
     Run the interactive sign-in. Blocking — worker thread only, never the
     office's dispatch thread.
+
+    `lang` should be the office's UI language so the login page matches the
+    rest of the application; the caller in ui/ passes it.
     """
     stage = stage or config.current_stage(store)
     open_browser = open_browser or webbrowser.open
@@ -234,7 +246,8 @@ def connect(store, stage=None, open_browser=None, timeout=CONSENT_TIMEOUT):
         nonce = secrets.token_urlsafe(16)
         state = pack_state(nonce)
 
-        open_browser(authorize_url(redirect_uri, challenge_for(verifier), state))
+        open_browser(
+            authorize_url(redirect_uri, challenge_for(verifier), state, lang))
         result = _await_callback(server, timeout)
     finally:
         server.server_close()

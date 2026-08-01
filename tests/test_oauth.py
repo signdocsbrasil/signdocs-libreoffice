@@ -99,6 +99,31 @@ def test_authorize_url_targets_our_own_login_domain():
     assert "openid" in query["scope"][0].split()
 
 
+def test_authorize_url_localises_the_login_page():
+    import urllib.parse as up
+    q = up.parse_qs(up.urlparse(
+        oauth.authorize_url("http://127.0.0.1:8712/callback", "c", "s")).query)
+    # Defaults to Brazilian Portuguese rather than Cognito's English default.
+    assert q["lang"] == ["pt-BR"]
+
+    q = up.parse_qs(up.urlparse(
+        oauth.authorize_url("http://127.0.0.1:8712/callback", "c", "s", "en")).query)
+    assert q["lang"] == ["en"]
+
+
+def test_connect_passes_the_language_through(monkeypatch, store):
+    seen = {}
+
+    def capture(url):
+        import urllib.parse as up
+        seen["lang"] = up.parse_qs(up.urlparse(url).query).get("lang")
+        _drive_browser(url)
+
+    monkeypatch.setattr(oauth, "post_form", lambda *a, **k: tokens())
+    oauth.connect(store, "prod", open_browser=capture, timeout=15, lang="es")
+    assert seen["lang"] == ["es"]
+
+
 def test_login_is_stage_independent():
     # One Cognito pool serves prod and hml; only the add-on API differs.
     assert "hml" not in config.COGNITO["domain"]

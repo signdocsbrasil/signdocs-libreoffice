@@ -40,6 +40,22 @@ COGNITO = {
     "scopes": ("openid", "email", "profile"),
 }
 
+#: LibreOffice UI language -> Cognito managed-login `lang` code.
+#:
+#: Note **pt-BR**, not `pt`: Cognito silently ignores `pt` and falls back to
+#: English, which is the sort of thing that looks like the feature simply not
+#: working. Verified against the live login page — `lang=pt-BR` renders
+#: "Senha", `lang=pt` renders "Enter password".
+#:
+#: Cognito also drops a `lang` cookie after the first request, so the choice
+#: persists in that browser until it is changed or cookies are cleared.
+LOGIN_LANG = {
+    "pt": "pt-BR",
+    "en": "en",
+    "es": "es",
+}
+DEFAULT_LOGIN_LANG = "pt-BR"
+
 STORAGE = {
     "stage": "signdocs.stage",
     # Per-stage suffix so switching to HML for a test cannot clobber the

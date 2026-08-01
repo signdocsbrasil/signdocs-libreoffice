@@ -89,8 +89,10 @@ def ensure_connected(ctx, frame, store, s):
     if not dialog.show(parent_window(frame)):
         return False
 
+    # Open the login page in the same language as the office UI.
+    lang = config.LOGIN_LANG.get(s.lang, config.DEFAULT_LOGIN_LANG)
     result = busy(ctx, parent_window(frame), s("busy_connect"),
-                  lambda: oauth.connect(store))
+                  lambda: oauth.connect(store, lang=lang))
     return _report(ctx, frame, result, s)
 
 

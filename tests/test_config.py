@@ -133,3 +133,21 @@ def test_redirect_uri_is_stable_for_a_given_port():
     # This formatting is a wire contract with the Cognito app client's
     # registered callback list, not cosmetics.
     assert config.redirect_uri(8712) == "http://127.0.0.1:8712/callback"
+
+
+def test_login_language_uses_pt_BR_not_pt():
+    # Cognito silently ignores `pt` and falls back to English — verified
+    # against the live login page. Getting this wrong looks exactly like the
+    # localisation feature not working at all.
+    assert config.LOGIN_LANG["pt"] == "pt-BR"
+    assert config.DEFAULT_LOGIN_LANG == "pt-BR"
+
+
+def test_every_ui_language_maps_to_a_login_language():
+    from signdocs.ui import strings
+
+    for lang in ("pt", "en", "es"):
+        assert lang in config.LOGIN_LANG
+    # The office can only ever report one of these three.
+    assert set(config.LOGIN_LANG) == {"pt", "en", "es"}
+    assert strings.Strings("de").lang in config.LOGIN_LANG
