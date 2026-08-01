@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly. The package job installs whatever LibreOffice the runner image
+    # currently carries, so this is what catches an office update changing
+    # extension registration or a PDF filter name under us — with nobody
+    # having touched the repo.
+    - cron: '0 7 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint and manifest checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ruff
+        run: pipx install ruff
+
+      # Syntax, XML well-formedness, the IMPL_NAME <-> ProtocolHandler.xcu
+      # drift check, and the rule that UNO may only be imported at module
+      # scope inside ui/. That last one is what keeps the logic testable
+      # without an office.
+      - name: Lint
+        run: bash bin/lint.sh
+
+  test:
+    name: Unit tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # LibreOffice bundles its own interpreter and which version that is
+        # depends on the build and the platform, so the logic has to hold
+        # across the whole range rather than on one blessed version.
+        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install pytest
+        run: python -m pip install --disable-pip-version-check pytest
+
+      - name: Unit tests
+        run: python -m pytest tests/ -q
+
+  package:
+    name: Package and install into a real LibreOffice
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      # unopkg, soffice and the python3-uno bridge. The last one is what the
+      # integration probe needs to talk to the running office; a LibreOffice
+      # without it installs the extension fine and can still never load it.
+      - name: Install LibreOffice
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-writer libreoffice-calc libreoffice-impress \
+            libreoffice-draw python3-uno
+          soffice --version
+          unopkg -V
+
+      - name: Build extension
+        run: bash bin/build-oxt.sh
+
+      # Archive shape, version drift, stdlib-only imports, the CA bundle, and
+      # a real unopkg add/list/validate round-trip.
+      - name: Assert package shape
+        run: bash bin/check-oxt.sh
+
+      # The bugs that matter here are silent: a wrong media-type or an
+      # implementation-name mismatch installs cleanly and simply never
+      # registers. Only a running office can see that.
+      - name: Integration probe against a headless office
+        run: bash bin/smoke-oxt.sh
+
+      - name: Upload extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: signdocs-brasil-oxt
+          path: signdocs-brasil-*.oxt
+          if-no-files-found: error

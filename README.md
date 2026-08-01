@@ -78,7 +78,30 @@ bash bin/smoke-oxt.sh     # office headless: menu registrado + dispatch executa
 # Fluxo completo contra a API de homologação (precisa de credenciais)
 export SIGNDOCS_CLIENT_ID=... SIGNDOCS_CLIENT_SECRET=...
 python3 bin/e2e_hml.py
+
+# Testar à mão, sem mexer no seu LibreOffice
+bash bin/try-it.sh --hml
 ```
+
+`bin/try-it.sh` instala a extensão em um perfil descartável
+(`-env:UserInstallation`) e abre o Writer. Roda **ao lado** do seu LibreOffice
+normal: o seu perfil, as suas extensões e os seus documentos abertos não são
+tocados, e não é preciso fechar nada. Para desfazer, apague o diretório do
+perfil.
+
+## Release
+
+Marque a tag e o resto é automático:
+
+```bash
+git tag -a v0.1.1 -m "..." && git push origin v0.1.1
+```
+
+O workflow confere que a tag bate com `description.xml`, roda todos os portões,
+constrói a partir da árvore da tag (`git archive`, não da cópia de trabalho) e
+publica um rascunho de release com o `.oxt` anexado. A submissão para o
+extensions.libreoffice.org continua manual — a listagem é moderada por uma
+pessoa na TDF e não existe API.
 
 `bin/e2e_hml.py` roda o fluxo real de ponta a ponta: consentimento pelo
 navegador roteirizado, troca do código, rotação do refresh token, exportação de

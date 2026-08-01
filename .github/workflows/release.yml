@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, verify and publish the extension
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build-oxt.sh --ref materialises the tagged tree with git archive,
+          # so the tag's history has to be present.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ruff
+        run: pipx install ruff
+
+      - name: Install LibreOffice
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-writer libreoffice-calc libreoffice-impress \
+            libreoffice-draw python3-uno
+
+      # The tag is the release name users will see; if it disagrees with
+      # description.xml, the Extension Manager shows one version and the
+      # download page another, and the self-hosted update feed breaks.
+      - name: Tag must match description.xml
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          XML="$(python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          ns = {'d': 'http://openoffice.org/extensions/description/2006'}
+          print(ET.parse('description.xml').getroot().find('d:version', ns).get('value'))
+          PY
+          )"
+          echo "tag=$TAG description.xml=$XML"
+          [ "$TAG" = "$XML" ] || { echo "version mismatch" >&2; exit 1; }
+
+      - name: Lint
+        run: bash bin/lint.sh
+
+      - name: Install pytest
+        run: python -m pip install --disable-pip-version-check pytest
+
+      - name: Unit tests
+        run: python -m pytest tests/ -q
+
+      # Reproducible: from the tag, not from whatever is in the working copy.
+      - name: Build from the tag
+        run: bash bin/build-oxt.sh --ref "$GITHUB_REF_NAME"
+
+      - name: Assert package shape
+        run: bash bin/check-oxt.sh
+
+      - name: Integration probe against a headless office
+        run: bash bin/smoke-oxt.sh
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: signdocs-brasil-*.oxt
+          generate_release_notes: true
+          # Uploading to extensions.libreoffice.org stays manual: that
+          # listing is moderated by a human at TDF and there is no API.
+          draft: true

@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # No pip ecosystem entry on purpose: the extension has zero third-party
+  # Python dependencies and bin/check-oxt.sh refuses to package a module that
+  # imports anything outside the standard library. LibreOffice ships its own
+  # interpreter with no pip, so a dependency here would be unusable on a
+  # customer's machine no matter what a manifest claimed.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: deps(actions)
