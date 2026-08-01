@@ -164,3 +164,39 @@ def test_wrong_shape_in_the_profile_is_ignored(tmp_path):
                     encoding="utf-8")
     history = History(JsonStore(str(path)), "prod")
     assert history.list() == []
+
+
+def test_set_status_records_a_terminal_outcome(history):
+    history.add(entry("env-1"))
+    history.set_status("env-1", "completed")
+    assert history.list()[0]["status"] == "completed"
+    # A completed send is no longer cancellable, so it must leave pending().
+    assert history.pending() == []
+
+
+def test_set_status_on_an_unknown_id_is_a_no_op(history):
+    # A send can be dropped from the capped store while a tracking dialog is
+    # still open on it.
+    history.add(entry("env-1"))
+    history.set_status("gone", "completed")
+    assert history.list()[0]["status"] == "pending"
+
+
+def test_api_status_maps_to_a_local_status():
+    from signdocs.history import FROM_API
+    assert FROM_API["COMPLETED"] == "completed"
+    assert FROM_API["CANCELLED"] == "cancelled"
+    assert FROM_API["EXPIRED"] == "expired"
+    assert FROM_API["FAILED"] == "failed"
+    # ACTIVE is deliberately absent: it leaves the row pending.
+    assert "ACTIVE" not in FROM_API
+
+
+def test_transaction_id_is_kept_but_no_link_is(history):
+    history.add(entry("ss-1", kind="session", transactionId="tx-9",
+                      url="https://s/x?cs=ss_secret_zzz"))
+    record = history.list()[0]
+    # The transaction id is needed to fetch the signed PDF later; the signing
+    # link is a bearer credential and must never be stored.
+    assert record["transactionId"] == "tx-9"
+    assert "url" not in record

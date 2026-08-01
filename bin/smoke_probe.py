@@ -19,6 +19,8 @@ import base64
 import json
 import os
 import sys
+import threading
+import time
 
 import uno
 import unohelper
@@ -31,8 +33,9 @@ COMMANDS = ("Enviar", "Historico", "Configurar")
 failures = []
 
 
-def check(label, condition):
-    print("  %s %s" % ("ok " if condition else "FAIL", label))
+def check(label, condition, detail=""):
+    print("  %s %s%s" % ("ok " if condition else "FAIL", label,
+                         ("  -- " + str(detail)) if detail else ""))
     if not condition:
         failures.append(label)
 
@@ -191,8 +194,6 @@ def main():
     # back through com.sun.star.awt.AsyncCallback. If that does not fire, the
     # UI would wait forever on work that already finished — so prove the
     # round-trip rather than assuming the service being present is enough.
-    import threading  # noqa: E402
-
     from signdocs.ui import async_work  # noqa: E402
 
     delivered = threading.Event()
@@ -276,6 +277,38 @@ def main():
         ui_dialogs.run_settings(ctx, None, store)
         check("settings dialog builds",
               "stage" in built.get(s("settings_title"), []))
+
+        # The tracking dialog starts a background poller. Building it with
+        # show() stubbed means the dialog returns immediately, which must stop
+        # that thread — a poller outliving its dialog would keep calling the
+        # API forever.
+        from signdocs import api as probe_api  # noqa: E402
+        polls = []
+        original_status = probe_api.status_of
+
+        def counting_status(store_, kind, ident, stage=None):
+            polls.append(ident)
+            return {"status": "ACTIVE", "completed": 0, "total": 2,
+                    "signed_available": False, "transactionId": None, "raw": {}}
+
+        probe_api.status_of = counting_status
+        try:
+            before = threading.active_count()
+            ui_dialogs.track_dialog(ctx, None, JsonStore(), s,
+                                    {"id": "env-x", "kind": "envelope",
+                                     "filename": "contrato.pdf"})
+            check("track dialog builds",
+                  "download" in built.get(s("track_title"), []))
+            # Give the poller a moment to notice the stop flag.
+            deadline = time.time() + 10
+            while threading.active_count() > before and time.time() < deadline:
+                time.sleep(0.2)
+            check("closing the tracker stops its poller",
+                  threading.active_count() <= before,
+                  "%d thread(s) before, %d after"
+                  % (before, threading.active_count()))
+        finally:
+            probe_api.status_of = original_status
     finally:
         widgets.Dialog.show = original_show
 

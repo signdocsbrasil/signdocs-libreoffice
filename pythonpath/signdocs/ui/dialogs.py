@@ -14,6 +14,7 @@ the user something that visibly finishes.
 
 import datetime
 import os
+import threading
 import urllib.parse
 import uuid
 
@@ -312,9 +313,156 @@ def result_dialog(ctx, frame, s, sent):
 
     y = height - BUTTON_H - MARGIN
     dialog.button("copy", MARGIN, y, BUTTON_W, BUTTON_H, s("copy"), copy_selected)
+    dialog.button("track", MARGIN + BUTTON_W + 4, y, BUTTON_W + 8, BUTTON_H,
+                  s("track_title"), lambda: dialog.finish("track"))
     dialog.button("close", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
                   s("close"), lambda: dialog.finish(True))
     return dialog.show(parent_window(frame))
+
+
+# ----------------------------------------------------------- track dialog
+#: Statuses that will never change again, so polling can stop.
+TERMINAL = ("COMPLETED", "CANCELLED", "EXPIRED", "FAILED")
+
+POLL_FIRST = 0
+POLL_MIN = 5
+POLL_MAX = 60
+
+
+def _unique_path(path):
+    """
+    Never silently overwrite. `contrato-assinado.pdf` becomes
+    `contrato-assinado (2).pdf` rather than replacing a file the user may
+    still need.
+    """
+    if not os.path.exists(path):
+        return path
+    stem, ext = os.path.splitext(path)
+    for n in range(2, 1000):
+        candidate = "%s (%d)%s" % (stem, n, ext)
+        if not os.path.exists(candidate):
+            return candidate
+    return path
+
+
+def track_dialog(ctx, frame, store, s, entry, document_model=None):
+    """
+    Follow a send to completion and bring the signed PDF back.
+
+    Polls in the background with a widening interval and stops the moment the
+    status is terminal — leaving a fixed-rate poller running against a
+    finished envelope would be rude to the API and pointless. The poller is
+    also stopped when the dialog closes, so closing the window really does end
+    the work.
+    """
+    stage = config.current_stage(store)
+    width = 300
+    height = 120
+    dialog = Dialog(ctx, s("track_title"), width, height)
+    inner = width - 2 * MARGIN
+    stop = threading.Event()
+    latest = {}
+
+    dialog.label("doc", MARGIN, MARGIN, inner, 10,
+                 "%s: %s" % (s("document"), entry.get("filename") or ""))
+    dialog.label("status", MARGIN, MARGIN + 14, inner, 10, s("busy_status"))
+    dialog.label("progress", MARGIN, MARGIN + 28, inner, 10, "")
+
+    def render(status):
+        """Main thread only — called through on_main_thread by the poller."""
+        latest["status"] = status
+        try:
+            dialog.model.getByName("status").Label = str(status.get("status") or "")
+            total = status.get("total") or 0
+            if total:
+                dialog.model.getByName("progress").Label = "%s: %d/%d" % (
+                    s("signers"), status.get("completed") or 0, total)
+            dialog.enable("download", bool(status.get("signed_available")))
+            dialog.enable("cancel_send", status.get("status") == "ACTIVE")
+        except Exception:
+            # The dialog was disposed between the poll and the callback.
+            pass
+
+        local = history.FROM_API.get(status.get("status"))
+        if local:
+            try:
+                history.History(store, stage).set_status(entry["id"], local)
+            except Exception:
+                pass
+
+    def poller():
+        delay = POLL_FIRST
+        while True:
+            if stop.wait(delay):
+                return
+            try:
+                status = api.status_of(store, entry["kind"], entry["id"], stage=stage)
+            except Exception:
+                # Transient: back off rather than hammering, and keep the
+                # dialog usable.
+                delay = min(max(delay, POLL_MIN) * 2, POLL_MAX)
+                continue
+            if stop.is_set():
+                return
+            async_work.on_main_thread(ctx, lambda st=status: render(st))
+            if status.get("status") in TERMINAL:
+                return
+            delay = min(int(max(delay, POLL_MIN) * 1.5), POLL_MAX)
+
+    def download():
+        result = busy(ctx, parent_window(frame), s("busy_download"),
+                      lambda: api.signed_pdf(
+                          store, entry["kind"], entry["id"],
+                          transaction_id=entry.get("transactionId"), stage=stage))
+        if not _report(ctx, frame, result, s):
+            return
+        target = _unique_path(signed_path_for(
+            document_model, api.signed_filename(entry.get("filename"))))
+        try:
+            with open(target, "wb") as handle:
+                handle.write(result.value)
+        except OSError as exc:
+            msgbox.error(ctx, frame, str(exc), s("app"))
+            return
+        msgbox.info(ctx, frame, "%s\n%s" % (s("saved_to"), target), s("app"))
+
+    def cancel_send():
+        result = busy(ctx, parent_window(frame), s("busy_status"),
+                      lambda: api.cancel(store, entry["kind"], entry["id"],
+                                         stage=stage))
+        if not _report(ctx, frame, result, s):
+            return
+        history.History(store, stage).mark_cancelled(entry["id"])
+        preserved = result.value.get("preservedSignedCount") or 0
+        if preserved:
+            msgbox.info(ctx, frame,
+                        "Assinaturas preservadas: %d" % preserved, s("app"))
+        dialog.finish(True)
+
+    y = height - BUTTON_H - MARGIN
+    dialog.button("refresh", MARGIN, y, BUTTON_W, BUTTON_H, s("refresh"),
+                  lambda: async_work.run(
+                      ctx,
+                      lambda: api.status_of(store, entry["kind"], entry["id"],
+                                            stage=stage),
+                      lambda r: render(r.value) if r.ok else None))
+    dialog.button("download", MARGIN + BUTTON_W + 4, y, BUTTON_W + 12, BUTTON_H,
+                  s("download"), download)
+    dialog.button("cancel_send", MARGIN + 2 * BUTTON_W + 20, y, BUTTON_W + 12,
+                  BUTTON_H, s("cancel_send"), cancel_send)
+    dialog.button("close", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
+                  s("close"), lambda: dialog.finish(True))
+    dialog.enable("download", False)
+    dialog.enable("cancel_send", False)
+
+    threading.Thread(target=poller, name="signdocs-poll", daemon=True).start()
+    try:
+        dialog.show(parent_window(frame))
+    finally:
+        # Closing the window ends the polling. Without this the thread would
+        # outlive the dialog and keep calling the API for nothing.
+        stop.set()
+    return latest.get("status")
 
 
 # ------------------------------------------------------------------ flows
@@ -379,18 +527,21 @@ def run_send(ctx, frame, store):
             continue
 
         result = sent.value
+        entry = {
+            "id": result["id"],
+            "kind": result["kind"],
+            "transactionId": result.get("transactionId"),
+            "filename": document["filename"],
+            "signers": state["signers"],
+            "createdAt": _now(),
+        }
         try:
-            history.History(store, stage).add({
-                "id": result["id"],
-                "kind": result["kind"],
-                "filename": document["filename"],
-                "signers": state["signers"],
-                "createdAt": _now(),
-            })
+            history.History(store, stage).add(entry)
         except Exception:
             pass
 
-        result_dialog(ctx, frame, s, result)
+        if result_dialog(ctx, frame, s, result) == "track":
+            track_dialog(ctx, frame, store, s, entry, document_model)
         return
 
 
@@ -447,9 +598,19 @@ def run_history(ctx, frame, store):
             msgbox.info(ctx, frame,
                         "Assinaturas preservadas: %d" % preserved, s("app"))
 
+    def track_selected():
+        index = dialog.selected_index("items")
+        current = store_history.list()
+        if index < 0 or index >= len(current):
+            return
+        track_dialog(ctx, frame, store, s, current[index])
+        dialog.set_items("items", lines(), keep_selection=False)
+
     y = height - BUTTON_H - MARGIN
-    dialog.button("cancel_send", MARGIN, y, BUTTON_W + 20, BUTTON_H,
-                  s("cancel_send"), cancel_selected)
+    dialog.button("track", MARGIN, y, BUTTON_W + 8, BUTTON_H,
+                  s("track_title"), track_selected)
+    dialog.button("cancel_send", MARGIN + BUTTON_W + 12, y, BUTTON_W + 20,
+                  BUTTON_H, s("cancel_send"), cancel_selected)
     dialog.button("close", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
                   s("close"), lambda: dialog.finish(True))
     dialog.show(parent_window(frame))
@@ -512,11 +673,18 @@ def store_for(ctx):
 
 
 def signed_path_for(document_model, filename):
-    """Where a signed PDF goes: beside the original, or the home directory."""
-    try:
-        url = document_model.getURL() or ""
-    except Exception:
-        url = ""
+    """
+    Where a signed PDF goes: beside the original document, or the home
+    directory when there is no original to sit beside — which is the case
+    whenever tracking is opened from the history list rather than from the
+    document that was sent.
+    """
+    url = ""
+    if document_model is not None:
+        try:
+            url = document_model.getURL() or ""
+        except Exception:
+            url = ""
     if url:
         directory = os.path.dirname(urllib.parse.unquote(
             urllib.parse.urlparse(url).path))

@@ -22,6 +22,17 @@ MAX = 25
 
 PENDING = "pending"
 CANCELLED = "cancelled"
+COMPLETED = "completed"
+EXPIRED = "expired"
+FAILED = "failed"
+
+#: API status -> local status. Anything not listed leaves the row pending.
+FROM_API = {
+    "COMPLETED": COMPLETED,
+    "CANCELLED": CANCELLED,
+    "EXPIRED": EXPIRED,
+    "FAILED": FAILED,
+}
 
 
 class History(object):
@@ -62,6 +73,10 @@ class History(object):
         entries.insert(0, {
             "id": entry.get("id"),
             "kind": entry.get("kind"),
+            # Kept so the tracking dialog can fetch the signed PDF for a
+            # single-signer send without first re-resolving it. An id, not a
+            # credential — unlike the signing link, which must never be here.
+            "transactionId": entry.get("transactionId"),
             "filename": entry.get("filename"),
             "signers": [
                 {"name": s.get("name"), "email": s.get("email")}
@@ -73,13 +88,23 @@ class History(object):
         self._write(entries)
         return self.list()
 
-    def mark_cancelled(self, entry_id):
+    def set_status(self, entry_id, status):
+        """
+        Record a terminal outcome so the list stops offering to cancel
+        something that has already finished.
+
+        Unknown ids are a no-op: a send can be dropped from the capped store
+        while the tracking dialog is still open on it.
+        """
         entries = self.list()
         for entry in entries:
             if entry.get("id") == entry_id:
-                entry["status"] = CANCELLED
+                entry["status"] = status
         self._write(entries)
         return self.list()
+
+    def mark_cancelled(self, entry_id):
+        return self.set_status(entry_id, CANCELLED)
 
     def remove(self, entry_id):
         self._write([e for e in self.list() if e.get("id") != entry_id])
