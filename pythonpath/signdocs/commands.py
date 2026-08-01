@@ -3,11 +3,11 @@
 Command router. `signdocs_addon.py` resolves a dispatch URL to a bare command
 name and hands it here.
 
-Every entry point is a placeholder in 0.1.0 — the scaffold exists so the
-registration chain (Addons.xcu → ProtocolHandler.xcu → Python component) can be
-proven on a real LibreOffice before any logic is written on top of it. Silent
-registration failures are the dominant failure mode for office extensions, so
-they get validated first.
+The `ui` package is imported lazily inside each handler rather than at module
+scope. That keeps this module importable without a running office, which is
+what lets the dispatch chain be tested before any dialog exists — and it means
+a failure while building a dialog surfaces as an error box from
+`signdocs_addon.dispatch`, not as an import error nobody sees.
 """
 
 import json
@@ -16,11 +16,6 @@ import sys
 
 from signdocs import __version__, paths
 from signdocs.ui import msgbox
-
-_TODO = (
-    "Ainda não implementado nesta versão de desenvolvimento ({v}).\n\n"
-    "Comando: {cmd}"
-)
 
 
 def run(ctx, frame, command):
@@ -39,27 +34,21 @@ def run(ctx, frame, command):
 
 
 def _enviar(ctx, frame):
-    doc = frame.getController().getModel() if frame else None
-    if doc is None:
-        msgbox.error(ctx, frame, "Nenhum documento aberto.")
-        return
+    from signdocs.ui import dialogs
 
-    title = getattr(doc, "Title", "") or "(sem título)"
-    msgbox.info(
-        ctx,
-        frame,
-        "Documento: {0}\n\n{1}".format(
-            title, _TODO.format(v=__version__, cmd="Enviar")
-        ),
-    )
+    dialogs.run_send(ctx, frame, dialogs.store_for(ctx))
 
 
 def _historico(ctx, frame):
-    msgbox.info(ctx, frame, _TODO.format(v=__version__, cmd="Historico"))
+    from signdocs.ui import dialogs
+
+    dialogs.run_history(ctx, frame, dialogs.store_for(ctx))
 
 
 def _configurar(ctx, frame):
-    msgbox.info(ctx, frame, _TODO.format(v=__version__, cmd="Configurar"))
+    from signdocs.ui import dialogs
+
+    dialogs.run_settings(ctx, frame, dialogs.store_for(ctx))
 
 
 def _store_or_none(ctx):

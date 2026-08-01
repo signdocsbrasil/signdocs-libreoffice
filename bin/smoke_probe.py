@@ -186,6 +186,188 @@ def main():
         finally:
             doc.close(False)
 
+    # --- 5. main-thread marshalling --------------------------------------
+    # Every network call runs on a worker thread, and its result has to come
+    # back through com.sun.star.awt.AsyncCallback. If that does not fire, the
+    # UI would wait forever on work that already finished — so prove the
+    # round-trip rather than assuming the service being present is enough.
+    import threading  # noqa: E402
+
+    from signdocs.ui import async_work  # noqa: E402
+
+    delivered = threading.Event()
+    outcome = {}
+
+    def done(result):
+        outcome["result"] = result
+        delivered.set()
+
+    async_work.run(ctx, lambda: 6 * 7, done)
+    check("AsyncCallback delivered a background result",
+          delivered.wait(30) and outcome["result"].ok
+          and outcome["result"].value == 42)
+
+    delivered = threading.Event()
+    outcome = {}
+
+    def boom():
+        raise ValueError("expected")
+
+    async_work.run(ctx, boom, done)
+    got = delivered.wait(30)
+    # A background failure that never reports back would leave a busy dialog
+    # up forever, which is worse than the error itself.
+    check("a raising job still reports back",
+          got and not outcome["result"].ok
+          and isinstance(outcome["result"].error, ValueError)
+          and "expected" in (outcome["result"].traceback_text or ""))
+
+    # --- 6. every dialog builds against real UNO -------------------------
+    # A wrong control service name or an unknown model property raises only
+    # when the dialog is constructed, which for a user is "I clicked the menu
+    # and got a traceback". Build them all here, with show() stubbed so
+    # nothing blocks on a modal loop in a headless office.
+    from signdocs.store import JsonStore  # noqa: E402
+    from signdocs.ui import dialogs as ui_dialogs  # noqa: E402
+    from signdocs.ui import strings as ui_strings  # noqa: E402
+    from signdocs.ui import widgets  # noqa: E402
+
+    s = ui_strings.for_office(ctx)
+    check("office locale resolves to a supported language (%s)" % s.lang,
+          s.lang in ("pt", "en", "es"))
+
+    built = {}
+    original_show = widgets.Dialog.show
+
+    def fake_show(self, parent=None):
+        built[self.model.Title] = list(self.model.getElementNames())
+        return None
+
+    widgets.Dialog.show = fake_show
+    try:
+        store = JsonStore()
+        state = {
+            "sender": "remetente@example.invalid",
+            "profile": "click_only",
+            "order": "PARALLEL",
+            "signers": [{"name": "Ana", "email": "ana@ex.com.br",
+                         "fiscal": "52998224725"}],
+        }
+        ui_dialogs.send_dialog(ctx, None, store, s, state)
+        check("send dialog builds",
+              "signers" in built.get(s("send_title"), []))
+
+        ui_dialogs.review_dialog(ctx, None, s, state, "contrato.pdf")
+        check("review dialog builds",
+              "summary" in built.get(s("review_title"), []))
+
+        ui_dialogs.signer_dialog(ctx, None, s)
+        check("signer dialog builds",
+              "fiscal" in built.get(s("signer_title"), []))
+
+        ui_dialogs.result_dialog(ctx, None, s, {
+            "kind": "session", "id": "ss_x",
+            "links": [{"signerName": "Ana", "url": "https://s/x?cs=y",
+                       "inviteSent": False}],
+        })
+        check("result dialog builds",
+              "links" in built.get(s("result_title"), []))
+
+        ui_dialogs.run_settings(ctx, None, store)
+        check("settings dialog builds",
+              "stage" in built.get(s("settings_title"), []))
+    finally:
+        widgets.Dialog.show = original_show
+
+    # --- 7. the send flow's orchestration --------------------------------
+    # run_send stitches together connect, export, send, history and the retry
+    # loop. None of that is covered by the unit tests, because dialogs.py
+    # cannot be imported without an office. Drive it here with the dialogs and
+    # the network stubbed, and assert what it actually passes downstream.
+    from signdocs import api as sd_api  # noqa: E402
+    from signdocs import config as sd_config  # noqa: E402
+    from signdocs import history as sd_history  # noqa: E402
+    from signdocs import intake as sd_intake  # noqa: E402
+
+    captured = {}
+    signers = [{"name": "Ana", "email": "ana@ex.com.br", "fiscal": "52998224725"},
+               {"name": "Bruno", "email": "bruno@ex.com.br", "fiscal": "12345678909"}]
+
+    originals = {
+        "ensure": ui_dialogs.ensure_connected,
+        "send_dlg": ui_dialogs.send_dialog,
+        "review_dlg": ui_dialogs.review_dialog,
+        "result_dlg": ui_dialogs.result_dialog,
+        "busy": ui_dialogs.busy,
+        "export": sd_intake.export_pdf,
+        "send": sd_api.send,
+    }
+
+    def fake_send_dialog(c, f, st, s_, state):
+        state["sender"] = "remetente@ex.com.br"
+        state["profile"] = "click_plus_otp"
+        state["order"] = "SEQUENTIAL"
+        state["signers"] = list(signers)
+        return "review"
+
+    def fake_send(store_, document, signers_, **kwargs):
+        captured["document"] = document
+        captured["signers"] = signers_
+        captured["kwargs"] = kwargs
+        return {"kind": "envelope", "id": "env-probe", "transactionId": None,
+                "links": [{"signerName": sg["name"], "signerEmail": sg["email"],
+                           "url": "https://s/x?cs=y", "inviteSent": False}
+                          for sg in signers_]}
+
+    try:
+        ui_dialogs.ensure_connected = lambda *a, **k: True
+        ui_dialogs.send_dialog = fake_send_dialog
+        ui_dialogs.review_dialog = lambda *a, **k: "send"
+        ui_dialogs.result_dialog = lambda *a, **k: True
+        # Run the work inline: busy() needs a modal loop that a headless
+        # office will not pump for us here.
+        ui_dialogs.busy = lambda c, p, m, work: async_work.Result(value=work())
+        sd_intake.export_pdf = lambda doc: {
+            "content": "QkFTRTY0", "filename": "contrato.pdf", "module": "writer"}
+        sd_api.send = fake_send
+
+        flow_store = JsonStore()
+        sd_config.set_stage(flow_store, "prod")
+        doc = desktop.loadComponentFromURL("private:factory/swriter", "_blank", 0, ())
+        try:
+            ui_dialogs.run_send(ctx, doc.getCurrentController().getFrame(), flow_store)
+        finally:
+            doc.close(False)
+
+        check("flow reached api.send", "kwargs" in captured)
+        check("flow passed the chosen profile",
+              captured.get("kwargs", {}).get("profile") == "click_plus_otp")
+        check("flow passed the chosen order",
+              captured.get("kwargs", {}).get("order") == "SEQUENTIAL")
+        check("flow passed the sender as owner",
+              captured.get("kwargs", {}).get("owner_email") == "remetente@ex.com.br")
+        check("flow minted an idempotency key",
+              bool(captured.get("kwargs", {}).get("idempotency_key")))
+        check("flow passed both signers", len(captured.get("signers", [])) == 2)
+
+        recorded = sd_history.History(flow_store, "prod").list()
+        check("flow recorded the send in history",
+              len(recorded) == 1 and recorded[0]["id"] == "env-probe")
+        # The record must carry no document content and no signing link.
+        check("history record leaks neither content nor link",
+              "QkFTRTY0" not in json.dumps(recorded)
+              and "cs=" not in json.dumps(recorded))
+        check("flow remembered the sender for next time",
+              flow_store.get(sd_config.STORAGE["sender_email"]) == "remetente@ex.com.br")
+    finally:
+        ui_dialogs.ensure_connected = originals["ensure"]
+        ui_dialogs.send_dialog = originals["send_dlg"]
+        ui_dialogs.review_dialog = originals["review_dlg"]
+        ui_dialogs.result_dialog = originals["result_dlg"]
+        ui_dialogs.busy = originals["busy"]
+        sd_intake.export_pdf = originals["export"]
+        sd_api.send = originals["send"]
+
     print("")
     if failures:
         print("FAILED: %d check(s)" % len(failures))

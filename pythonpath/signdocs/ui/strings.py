@@ -1,0 +1,186 @@
+# SPDX-License-Identifier: MPL-2.0
+"""
+UI strings, keyed by the office's own locale.
+
+Externalised from day one. The ONLYOFFICE plugin hardcodes every string in
+pt-BR and has no string table, which is fine for a Brazilian-only plugin
+shipped from our own site but not for a listing on
+extensions.libreoffice.org, where the audience is global by default.
+
+pt-BR is the fallback rather than English: this is an ICP-Brasil product, and
+a Brazilian user seeing English because locale detection hiccuped is a worse
+outcome than the reverse.
+"""
+
+DEFAULT_LANG = "pt"
+
+_STRINGS = {
+    # -- window titles
+    "app": {"pt": "SignDocs Brasil", "en": "SignDocs Brasil", "es": "SignDocs Brasil"},
+    "send_title": {"pt": "Enviar para assinatura",
+                   "en": "Send for signature", "es": "Enviar para firma"},
+    "review_title": {"pt": "Conferir envio", "en": "Review",
+                     "es": "Revisar envío"},
+    "result_title": {"pt": "Enviado", "en": "Sent", "es": "Enviado"},
+    "track_title": {"pt": "Acompanhar", "en": "Track", "es": "Seguimiento"},
+    "settings_title": {"pt": "Configurações", "en": "Settings",
+                       "es": "Configuración"},
+    "history_title": {"pt": "Envios recentes", "en": "Recent sends",
+                      "es": "Envíos recientes"},
+    "signer_title": {"pt": "Signatário", "en": "Signer", "es": "Firmante"},
+    "connect_title": {"pt": "Conectar", "en": "Connect", "es": "Conectar"},
+
+    # -- fields
+    "sender": {"pt": "Remetente", "en": "Sender", "es": "Remitente"},
+    "sender_hint": {
+        "pt": "Sem o remetente, a API não envia convites por e-mail.",
+        "en": "Without a sender, the API dispatches no invitation e-mails.",
+        "es": "Sin remitente, la API no envía invitaciones por correo.",
+    },
+    "sig_type": {"pt": "Tipo de assinatura", "en": "Signature type",
+                 "es": "Tipo de firma"},
+    "order": {"pt": "Ordem", "en": "Order", "es": "Orden"},
+    "signers": {"pt": "Signatários", "en": "Signers", "es": "Firmantes"},
+    "name": {"pt": "Nome", "en": "Name", "es": "Nombre"},
+    "email": {"pt": "E-mail", "en": "E-mail", "es": "Correo"},
+    "fiscal": {"pt": "CPF ou CNPJ", "en": "CPF or CNPJ", "es": "CPF o CNPJ"},
+    "document": {"pt": "Documento", "en": "Document", "es": "Documento"},
+
+    # -- signature profiles
+    "click_only": {"pt": "Clique simples", "en": "Click only",
+                   "es": "Clic simple"},
+    "click_plus_otp": {"pt": "Clique + código por e-mail",
+                       "en": "Click + e-mail code",
+                       "es": "Clic + código por correo"},
+    "biometric": {"pt": "Biometria facial", "en": "Facial biometrics",
+                  "es": "Biometría facial"},
+    "digital_certificate": {"pt": "Certificado digital ICP-Brasil",
+                            "en": "ICP-Brasil digital certificate",
+                            "es": "Certificado digital ICP-Brasil"},
+
+    # -- order
+    "parallel": {"pt": "Paralela (todos ao mesmo tempo)",
+                 "en": "Parallel (everyone at once)",
+                 "es": "Paralela (todos a la vez)"},
+    "sequential": {"pt": "Sequencial (um após o outro)",
+                   "en": "Sequential (one after another)",
+                   "es": "Secuencial (uno tras otro)"},
+
+    # -- buttons
+    "add": {"pt": "Adicionar", "en": "Add", "es": "Añadir"},
+    "edit": {"pt": "Editar", "en": "Edit", "es": "Editar"},
+    "remove": {"pt": "Remover", "en": "Remove", "es": "Quitar"},
+    "cancel": {"pt": "Cancelar", "en": "Cancel", "es": "Cancelar"},
+    "back": {"pt": "Voltar", "en": "Back", "es": "Volver"},
+    "review": {"pt": "Conferir", "en": "Review", "es": "Revisar"},
+    "send_now": {"pt": "Enviar agora", "en": "Send now", "es": "Enviar ahora"},
+    "close": {"pt": "Fechar", "en": "Close", "es": "Cerrar"},
+    "copy": {"pt": "Copiar", "en": "Copy", "es": "Copiar"},
+    "ok": {"pt": "OK", "en": "OK", "es": "OK"},
+    "connect": {"pt": "Conectar", "en": "Connect", "es": "Conectar"},
+    "disconnect": {"pt": "Desconectar", "en": "Disconnect", "es": "Desconectar"},
+    "refresh": {"pt": "Atualizar", "en": "Refresh", "es": "Actualizar"},
+    "download": {"pt": "Baixar assinado", "en": "Download signed",
+                 "es": "Descargar firmado"},
+    "cancel_send": {"pt": "Cancelar envio", "en": "Cancel send",
+                    "es": "Cancelar envío"},
+    "confirm_cancel": {"pt": "Confirmar cancelamento?",
+                       "en": "Confirm cancellation?",
+                       "es": "¿Confirmar cancelación?"},
+
+    # -- states / messages
+    "busy_export": {"pt": "Convertendo o documento para PDF…",
+                    "en": "Converting the document to PDF…",
+                    "es": "Convirtiendo el documento a PDF…"},
+    "busy_send": {"pt": "Enviando…", "en": "Sending…", "es": "Enviando…"},
+    "busy_connect": {"pt": "Aguardando a autorização no navegador…",
+                     "en": "Waiting for authorisation in the browser…",
+                     "es": "Esperando la autorización en el navegador…"},
+    "busy_status": {"pt": "Consultando…", "en": "Checking…",
+                    "es": "Consultando…"},
+    "busy_download": {"pt": "Baixando o documento assinado…",
+                      "en": "Downloading the signed document…",
+                      "es": "Descargando el documento firmado…"},
+    "not_connected": {
+        "pt": "Conecte-se à sua conta SignDocs para enviar documentos.",
+        "en": "Connect to your SignDocs account to send documents.",
+        "es": "Conéctate a tu cuenta SignDocs para enviar documentos.",
+    },
+    "connected_as": {"pt": "Conectado", "en": "Connected", "es": "Conectado"},
+    "no_signers": {"pt": "Adicione pelo menos um signatário.",
+                   "en": "Add at least one signer.",
+                   "es": "Añade al menos un firmante."},
+    "no_history": {"pt": "Nenhum envio recente.", "en": "No recent sends.",
+                   "es": "Ningún envío reciente."},
+    "sent_ok": {"pt": "Envio criado. Links por signatário:",
+                "en": "Send created. Per-signer links:",
+                "es": "Envío creado. Enlaces por firmante:"},
+    "copied": {"pt": "Link copiado.", "en": "Link copied.",
+               "es": "Enlace copiado."},
+    "invite_sent": {"pt": "convite enviado", "en": "invitation sent",
+                    "es": "invitación enviada"},
+    "invite_not_sent": {"pt": "sem convite — envie o link você mesmo",
+                        "en": "no invitation — send the link yourself",
+                        "es": "sin invitación — envía el enlace tú mismo"},
+    "saved_to": {"pt": "Documento assinado salvo em:",
+                 "en": "Signed document saved to:",
+                 "es": "Documento firmado guardado en:"},
+    "stage": {"pt": "Ambiente", "en": "Environment", "es": "Entorno"},
+    "stage_prod": {"pt": "Produção", "en": "Production", "es": "Producción"},
+    "stage_hml": {"pt": "Homologação (testes)", "en": "Homologation (testing)",
+                  "es": "Homologación (pruebas)"},
+    "error": {"pt": "Erro", "en": "Error", "es": "Error"},
+}
+
+#: Profile keys in the order the dropdown offers them.
+PROFILE_ORDER = ("click_only", "click_plus_otp", "digital_certificate", "biometric")
+
+
+def _lang_from_locale(locale):
+    if not locale:
+        return DEFAULT_LANG
+    primary = str(locale).replace("_", "-").split("-")[0].lower()
+    return primary if primary in ("pt", "en", "es") else DEFAULT_LANG
+
+
+def office_lang(ctx):
+    """
+    The office UI language, reduced to one of pt/en/es.
+
+    Never raises: a locale lookup failing is not a reason to refuse to draw a
+    dialog, so it degrades to pt-BR.
+    """
+    try:
+        from com.sun.star.beans import PropertyValue
+
+        provider = ctx.ServiceManager.createInstanceWithContext(
+            "com.sun.star.configuration.ConfigurationProvider", ctx
+        )
+        arg = PropertyValue()
+        arg.Name = "nodepath"
+        arg.Value = "/org.openoffice.Setup/L10N"
+        node = provider.createInstanceWithArguments(
+            "com.sun.star.configuration.ConfigurationAccess", (arg,)
+        )
+        return _lang_from_locale(node.getByName("ooLocale"))
+    except Exception:
+        return DEFAULT_LANG
+
+
+class Strings(object):
+    """Bound to one language. `s("send_title")` reads better than a dict lookup."""
+
+    def __init__(self, lang=DEFAULT_LANG):
+        self.lang = lang if lang in ("pt", "en", "es") else DEFAULT_LANG
+
+    def __call__(self, key):
+        entry = _STRINGS.get(key)
+        if not entry:
+            # A missing key is a bug, but showing the key beats showing
+            # nothing and beats raising inside a dialog builder.
+            return key
+        return entry.get(self.lang) or entry[DEFAULT_LANG]
+
+
+def for_office(ctx):
+    return Strings(office_lang(ctx))
