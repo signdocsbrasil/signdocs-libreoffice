@@ -19,6 +19,7 @@ invite; the envelope run uses `.invalid` addresses, which cannot be
 delivered to. Everything created is cancelled before the script exits.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -50,15 +51,40 @@ def section(title):
     print("\n== %s" % title)
 
 
+def signed_in_email(token):
+    """
+    Read the `email` claim out of our own ID token.
+
+    Used to make the single-signer run address the person who just signed in,
+    which the API treats as sender-is-signer and therefore dispatches NO
+    invite. A hardcoded default here would mail a real person the first time
+    somebody ran this with a different account.
+
+    Unverified base64 decode on purpose: the server verifies the signature,
+    this is only picking a value to put in a form.
+    """
+    import base64
+
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload)).get("email")
+    except Exception:
+        return None
+
+
 def make_pdf():
     """A genuinely valid PDF, produced by LibreOffice itself."""
     tmpdir = tempfile.mkdtemp(prefix="signdocs-e2e-")
     src = os.path.join(tmpdir, "contrato.txt")
     with open(src, "w", encoding="utf-8") as fh:
         fh.write("Contrato de teste da extensao SignDocs para LibreOffice.\n")
+    # Its own profile, so this never contends with a LibreOffice the
+    # developer already has open.
     subprocess.run(
-        ["soffice", "--headless", "--norestore", "--convert-to", "pdf",
-         "--outdir", tmpdir, src],
+        ["soffice", "--headless", "--norestore",
+         "-env:UserInstallation=file://" + os.path.join(tmpdir, "profile"),
+         "--convert-to", "pdf", "--outdir", tmpdir, src],
         check=True, capture_output=True, timeout=180,
     )
     with open(os.path.join(tmpdir, "contrato.pdf"), "rb") as fh:
@@ -102,7 +128,12 @@ def main():
     check("PDF built by LibreOffice", raw_len > 500, "%d bytes" % raw_len)
 
     section("single signer")
-    me = os.environ.get("SIGNDOCS_E2E_EMAIL", "administrativo@signdocs.com.br")
+    me = os.environ.get("SIGNDOCS_E2E_EMAIL") or signed_in_email(
+        oauth.bearer_token(store, STAGE))
+    if not me:
+        print("  could not read the email claim; set SIGNDOCS_E2E_EMAIL")
+        return 2
+    print("  signing as %s (same as sender, so no invite is sent)" % me)
     sent = api.send(store, document, [{"name": "Teste E2E", "email": me,
                                        "fiscal": CPF_A}],
                     profile="click_only", stage=STAGE)
