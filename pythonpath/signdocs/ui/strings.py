@@ -84,9 +84,24 @@ _STRINGS = {
                  "es": "Descargar firmado"},
     "cancel_send": {"pt": "Cancelar envio", "en": "Cancel send",
                     "es": "Cancelar envío"},
-    "confirm_cancel": {"pt": "Confirmar cancelamento?",
-                       "en": "Confirm cancellation?",
-                       "es": "¿Confirmar cancelación?"},
+    # Says what cancelling actually does. "Confirmar cancelamento?" on its own
+    # answers none of the three things a user is weighing: whether the links
+    # die, whether signatures already collected are lost, and whether the send
+    # comes back. Only the first is what they intend.
+    "confirm_cancel": {
+        "pt": "Cancelar este envio?\n\nOs links de assinatura deixam de "
+              "funcionar. As assinaturas já coletadas são preservadas, e a "
+              "cota não é devolvida.",
+        "en": "Cancel this send?\n\nThe signing links stop working. "
+              "Signatures already collected are preserved, and the allowance "
+              "is not given back.",
+        "es": "¿Cancelar este envío?\n\nLos enlaces de firma dejan de "
+              "funcionar. Las firmas ya recogidas se conservan, y la cuota no "
+              "se devuelve.",
+    },
+    "preserved_signatures": {"pt": "Assinaturas preservadas: %d",
+                             "en": "Signatures preserved: %d",
+                             "es": "Firmas conservadas: %d"},
 
     # -- states / messages
     "busy_export": {"pt": "Convertendo o documento para PDF…",
@@ -107,6 +122,9 @@ _STRINGS = {
         "es": "Conéctate a tu cuenta SignDocs para enviar documentos.",
     },
     "connected_as": {"pt": "Conectado", "en": "Connected", "es": "Conectado"},
+    "max_signers": {"pt": "Máximo de %d signatários.",
+                    "en": "At most %d signers.",
+                    "es": "Máximo de %d firmantes."},
     "no_signers": {"pt": "Adicione pelo menos um signatário.",
                    "en": "Add at least one signer.",
                    "es": "Añade al menos un firmante."},

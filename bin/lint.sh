@@ -23,6 +23,9 @@ fi
 # convenience `import uno` at the top of the wrong file. Only ui/ may do it at
 # module scope; elsewhere the import has to be deferred into the function that
 # actually needs the office.
+echo "no hardcoded pt-BR strings outside strings.py"
+python3 bin/check_strings.py
+
 echo "no module-scope uno imports outside ui/"
 python3 - <<'PY'
 import os, re, sys

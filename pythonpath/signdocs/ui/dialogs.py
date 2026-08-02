@@ -265,7 +265,7 @@ def _refresh_signers(dialog, state):
 def _add_signer(ctx, frame, s, dialog, state):
     if len(state["signers"]) >= api.MAX_SIGNERS:
         msgbox.error(ctx, frame,
-                     "Máximo de %d signatários." % api.MAX_SIGNERS, s("app"))
+                     s("max_signers") % api.MAX_SIGNERS, s("app"))
         return
     signer = signer_dialog(ctx, frame, s)
     if signer:
@@ -466,6 +466,10 @@ def track_dialog(ctx, frame, store, s, entry, document_model=None):
         msgbox.info(ctx, frame, "%s\n%s" % (s("saved_to"), target), s("app"))
 
     def cancel_send():
+        # Irreversible from in here, and it acts on people outside this
+        # machine: whoever holds a link finds it dead with no explanation.
+        if not msgbox.confirm(ctx, frame, s("confirm_cancel"), s("app")):
+            return
         result = busy(ctx, parent_window(frame), s("busy_status"),
                       lambda: api.cancel(store, entry["kind"], entry["id"],
                                          stage=stage))
@@ -474,8 +478,8 @@ def track_dialog(ctx, frame, store, s, entry, document_model=None):
         history.History(store, stage).mark_cancelled(entry["id"])
         preserved = result.value.get("preservedSignedCount") or 0
         if preserved:
-            msgbox.info(ctx, frame,
-                        "Assinaturas preservadas: %d" % preserved, s("app"))
+            msgbox.info(ctx, frame, s("preserved_signatures") % preserved,
+                        s("app"))
         dialog.finish(True)
 
     y = height - BUTTON_H - MARGIN
@@ -675,6 +679,15 @@ def run_history(ctx, frame, store):
         entry = selected()
         if entry is None or entry.get("status") != history.PENDING:
             return
+        # Confirmed here too, and for a sharper reason than in the tracker:
+        # this list is a grid of similar-looking rows, so acting on the wrong
+        # one is a plausible slip rather than a hypothetical.
+        prompt = s("confirm_cancel")
+        if entry.get("filename"):
+            # Naming the document is the guard that actually works here.
+            prompt = "%s\n\n%s" % (entry["filename"], prompt)
+        if not msgbox.confirm(ctx, frame, prompt, s("app")):
+            return
         result = busy(ctx, parent_window(frame), s("busy_status"),
                       lambda: api.cancel(store, entry["kind"], entry["id"],
                                          stage=stage))
@@ -686,8 +699,8 @@ def run_history(ctx, frame, store):
         if preserved:
             # Cancelling does not destroy signatures already collected, and
             # implying otherwise would be alarming and wrong.
-            msgbox.info(ctx, frame,
-                        "Assinaturas preservadas: %d" % preserved, s("app"))
+            msgbox.info(ctx, frame, s("preserved_signatures") % preserved,
+                        s("app"))
 
     def track_selected():
         entry = selected()

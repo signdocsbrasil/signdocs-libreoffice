@@ -24,6 +24,25 @@ def test_every_key_exists_in_every_language():
     assert missing == []
 
 
+def test_format_placeholders_match_across_languages():
+    """
+    A key used with `%` must take the same arguments in every language.
+
+    Get this wrong and the mismatch raises TypeError at format time, inside a
+    dialog builder, in whichever locale nobody happened to test — so pt-BR
+    looks fine and the extension breaks for the Spanish half of its audience.
+    The completeness test above cannot see it: both strings are present, they
+    just disagree about their arguments.
+    """
+    import re
+
+    spec = re.compile(r"%[-#0 +]*\d*(?:\.\d+)?[a-zA-Z]")
+    for key, entry in strings._STRINGS.items():
+        shapes = {lang: tuple(spec.findall((entry.get(lang) or "").replace("%%", "")))
+                  for lang in ("pt", "en", "es")}
+        assert len(set(shapes.values())) == 1, (key, shapes)
+
+
 def test_lookup_returns_the_requested_language():
     assert strings.Strings("pt")("cancel") == "Cancelar"
     assert strings.Strings("en")("cancel") == "Cancel"
