@@ -174,12 +174,15 @@ _STRINGS = {
 
     # -- plan and quota
     "plan": {"pt": "Plano", "en": "Plan", "es": "Plan"},
-    "quota_line": {"pt": "Plano %s · restam %d de %d envios",
-                   "en": "%s plan · %d of %d sends left",
-                   "es": "Plan %s · quedan %d de %d envíos"},
-    "quota_line_noplan": {"pt": "Restam %d de %d envios",
-                          "en": "%d of %d sends left",
-                          "es": "Quedan %d de %d envíos"},
+    # Used and remaining, not just remaining. "Usados 12/80" answers "how much
+    # have I burned this month" and "restam 68" answers "can I send now"; the
+    # second alone leaves the first to arithmetic.
+    "quota_line": {"pt": "Plano %s · usados %d/%d · restam %d",
+                   "en": "%s plan · used %d/%d · %d left",
+                   "es": "Plan %s · usados %d/%d · quedan %d"},
+    "quota_line_noplan": {"pt": "Usados %d/%d · restam %d",
+                          "en": "Used %d/%d · %d left",
+                          "es": "Usados %d/%d · quedan %d"},
     "quota_credits": {"pt": "Créditos avulsos · %d disponíveis",
                       "en": "Pay-per-use credits · %d available",
                       "es": "Créditos sueltos · %d disponibles"},
@@ -189,6 +192,56 @@ _STRINGS = {
     "quota_unknown": {"pt": "Não foi possível consultar o seu plano.",
                       "en": "Could not read your plan.",
                       "es": "No se pudo consultar tu plan."},
+    # -- upgrade
+    "upgrade": {"pt": "Assinar plano", "en": "Subscribe", "es": "Suscribirse"},
+    "upgrade_title": {"pt": "Assinar um plano", "en": "Choose a plan",
+                      "es": "Elegir un plan"},
+    "upgrade_intro": {
+        "pt": "Escolha um plano para continuar enviando documentos.",
+        "en": "Choose a plan to keep sending documents.",
+        "es": "Elige un plan para seguir enviando documentos.",
+    },
+    "plan_row": {"pt": "%s — %d documentos/mês — %s",
+                 "en": "%s — %d documents/month — %s",
+                 "es": "%s — %d documentos/mes — %s"},
+    "billing": {"pt": "Cobrança", "en": "Billing", "es": "Facturación"},
+    "monthly": {"pt": "Mensal", "en": "Monthly", "es": "Mensual"},
+    "annual": {"pt": "Anual (cota de 12 meses de uma vez)",
+               "en": "Annual (12 months of allowance at once)",
+               "es": "Anual (cuota de 12 meses de una vez)"},
+    "pick_a_plan": {"pt": "Selecione um plano.", "en": "Select a plan.",
+                    "es": "Selecciona un plan."},
+    "busy_checkout": {"pt": "Preparando o pagamento…",
+                      "en": "Preparing checkout…",
+                      "es": "Preparando el pago…"},
+    # The extension never sees card details: they belong on Stripe's own page,
+    # in the browser, never in a UNO dialog.
+    "checkout_opened": {
+        "pt": "Abrimos o navegador para concluir o pagamento com segurança.\n\n"
+              "Depois de pagar, feche e abra esta janela de novo para ver a "
+              "nova cota.",
+        "en": "We opened your browser to complete the payment securely.\n\n"
+              "After paying, close and reopen this window to see the new "
+              "allowance.",
+        "es": "Abrimos el navegador para completar el pago de forma segura."
+              "\n\nDespués de pagar, cierra y abre esta ventana de nuevo para "
+              "ver la nueva cuota.",
+    },
+    "checkout_link": {
+        "pt": "Não foi possível abrir o navegador. O link foi copiado:",
+        "en": "Could not open the browser. The link has been copied:",
+        "es": "No se pudo abrir el navegador. El enlace fue copiado:",
+    },
+    "fiscal_title": {"pt": "Dados de faturamento", "en": "Billing details",
+                     "es": "Datos de facturación"},
+    "fiscal_intro": {
+        "pt": "Precisamos destes dados uma única vez para emitir a cobrança.",
+        "en": "We need these once in order to issue the invoice.",
+        "es": "Necesitamos estos datos una sola vez para emitir el cobro.",
+    },
+    "legal_name": {"pt": "Nome ou razão social", "en": "Name or company name",
+                   "es": "Nombre o razón social"},
+
     "quota_confirm": {
         "pt": "Sem envios disponíveis neste período. O servidor deve "
               "recusar este envio.\n\nCancelar um envio anterior não devolve "
@@ -311,9 +364,16 @@ def quota_line(s, info):
         return s("quota_credits") % remaining
 
     plan = (info.get("user") or {}).get("plan") if isinstance(info.get("user"), dict) else None
+    # `used` is taken from the server when it sends it and derived only as a
+    # fallback, so the two numbers on screen can never disagree with the row
+    # the server is actually metering.
+    used = _as_int(quota.get("used"))
+    if used is None:
+        used = max(0, limit - remaining)
+
     if plan:
-        return s("quota_line") % (plan, remaining, limit)
-    return s("quota_line_noplan") % (remaining, limit)
+        return s("quota_line") % (plan, used, limit, remaining)
+    return s("quota_line_noplan") % (used, limit, remaining)
 
 
 def quota_exhausted(info):

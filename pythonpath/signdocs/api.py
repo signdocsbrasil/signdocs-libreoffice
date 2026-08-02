@@ -343,3 +343,69 @@ def init_session(store, stage=None):
     before the user builds a whole send they have no quota for.
     """
     return _call(store, "POST", "/init-session", {}, stage) or {}
+
+
+#: The add-on tier caps each list per call; sending more is silently truncated
+#: server-side, so the client splits instead.
+PENDING_BATCH = 25
+
+
+def pending_statuses(store, session_ids=(), envelope_ids=(), stage=None):
+    """
+    Status of many sends in one call.
+
+    The per-row alternative is one HTTPS round trip per pending item, which on
+    a desktop connection is what stands between opening a list and seeing it.
+
+    Returns `{"sessions": [...], "envelopes": [...], "droppedIds": [...]}`.
+    `droppedIds` are ids the server would not answer for — someone else's, or
+    aged out — and the caller must not read that as "still pending": it is the
+    server declining to say, which is different from saying "active".
+    """
+    payload = {
+        "sessionIds": list(session_ids)[:PENDING_BATCH],
+        "envelopeIds": list(envelope_ids)[:PENDING_BATCH],
+    }
+    result = _call(store, "POST", "/pending-statuses", payload, stage) or {}
+    return {
+        "sessions": result.get("sessions") or [],
+        "envelopes": result.get("envelopes") or [],
+        "droppedIds": result.get("droppedIds") or [],
+    }
+
+
+# ---------------------------------------------------------------- upgrade
+#: What /create-checkout accepts. Kept in step with VALID_PLANS in
+#: external-api/src/handlers/libreoffice/create-checkout.ts — a plan name this
+#: side does not match is a 400, not a wrong price.
+PLANS = (
+    {"name": "Iniciante 20", "docs": 20, "monthly": "R$ 19,90"},
+    {"name": "Iniciante 80", "docs": 80, "monthly": "R$ 44,90"},
+    {"name": "Avançado 80", "docs": 80, "monthly": "R$ 54,90"},
+    {"name": "Avançado 200", "docs": 200, "monthly": "R$ 124,90"},
+)
+
+
+def has_fiscal(store, stage=None):
+    """
+    Whether the account already carries CPF/CNPJ and name.
+
+    Asked before checkout so the fiscal form is only shown to people who need
+    it. Never returns the stored values.
+    """
+    result = _call(store, "POST", "/prepare-fiscal", {}, stage) or {}
+    return bool(result.get("hasFiscal"))
+
+
+def create_checkout(store, plan, frequency="Mensal", fiscal=None, stage=None):
+    """
+    A Stripe Checkout URL for `plan`, to be opened in the user's browser.
+
+    The extension cannot host a payment form and must not try: card details
+    belong in the browser, on Stripe's own page, never in a UNO dialog.
+    """
+    payload = {"plan": plan, "frequency": frequency}
+    if fiscal:
+        payload["fiscal"] = fiscal
+    result = _call(store, "POST", "/create-checkout", payload, stage) or {}
+    return result.get("checkoutUrl")

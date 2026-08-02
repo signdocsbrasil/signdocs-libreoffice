@@ -35,9 +35,17 @@ def refresh_pending(store, stage, status_fn=None):
         independent, and the common case for a stale list is exactly that some
         of it has aged out.
     """
-    status_fn = status_fn or api.status_of
     log = history.History(store, stage)
 
+    # One call for the whole list when we can. Falls through to the per-row
+    # path when the batch is unavailable — an older deployment without the
+    # route, or a 429 — because a slow refresh beats none.
+    if status_fn is None:
+        batched = _refresh_batched(store, stage, log)
+        if batched is not None:
+            return batched
+
+    status_fn = status_fn or api.status_of
     checked = 0
     failed = 0
 
@@ -70,6 +78,65 @@ def refresh_pending(store, stage, status_fn=None):
         local = history.FROM_API.get(state.get("status"))
         if local:
             log.set_status(ident, local)
+
+    return log.list(), checked, failed
+
+
+def _refresh_batched(store, stage, log, batch_fn=None):
+    """
+    One round trip for the whole pending list, or None if that is not on.
+
+    Returning None rather than raising is what lets the caller fall back to
+    the per-row path: a 429 or an endpoint that is not deployed yet should
+    cost a slower refresh, not no refresh.
+    """
+    batch_fn = batch_fn or api.pending_statuses
+
+    pending = log.pending()
+    sessions = [e["id"] for e in pending
+                if e.get("kind") == "session" and e.get("id")]
+    envelopes = [e["id"] for e in pending
+                 if e.get("kind") == "envelope" and e.get("id")]
+    if not sessions and not envelopes:
+        return log.list(), 0, 0
+
+    checked = 0
+    failed = 0
+
+    # The server caps each list per call, so walk it in slices rather than
+    # letting the tail be silently dropped.
+    for start in range(0, max(len(sessions), len(envelopes)), api.PENDING_BATCH):
+        try:
+            result = batch_fn(
+                store,
+                session_ids=sessions[start:start + api.PENDING_BATCH],
+                envelope_ids=envelopes[start:start + api.PENDING_BATCH],
+                stage=stage,
+            )
+        except Exception:
+            # Nothing learned. None only on the first slice: once some rows
+            # are resolved, redoing them one at a time would re-ask for
+            # answers already in hand.
+            if start == 0 and not checked:
+                return None
+            failed += len(sessions[start:start + api.PENDING_BATCH])
+            failed += len(envelopes[start:start + api.PENDING_BATCH])
+            continue
+
+        for row in result.get("sessions", []) + result.get("envelopes", []):
+            ident = row.get("sessionId") or row.get("envelopeId")
+            if not ident:
+                continue
+            checked += 1
+            local = history.FROM_API.get(row.get("status"))
+            if local:
+                log.set_status(ident, local)
+
+        # A dropped id is the server declining to answer — someone else's, or
+        # gone. Only the second is actionable, and it is indistinguishable
+        # here, so the row is left pending rather than guessed at. The per-row
+        # path can still tell them apart via the 404.
+        failed += len(result.get("droppedIds", []))
 
     return log.list(), checked, failed
 

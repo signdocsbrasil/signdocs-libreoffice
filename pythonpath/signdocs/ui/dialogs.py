@@ -150,6 +150,135 @@ def _signer_line(index, signer):
     return label
 
 
+# -------------------------------------------------------------- upgrade
+def fiscal_dialog(ctx, frame, s):
+    """
+    CPF/CNPJ and legal name, asked only when the account carries neither.
+
+    `categoriaPfPj` is derived from the length rather than asked: the document
+    already says which it is, and a mismatched pair — a CPF filed as PJ — is a
+    billing record nobody would think to check.
+    """
+    width = 250
+    height = 96
+    dialog = Dialog(ctx, s("fiscal_title"), width, height)
+    inner = width - 2 * MARGIN
+
+    dialog.label("intro", MARGIN, MARGIN, inner, 18, s("fiscal_intro"),
+                 MultiLine=True)
+    dialog.label("l1", MARGIN, MARGIN + 26, 72, 10, s("fiscal"))
+    dialog.edit("fiscal", 86, MARGIN + 24, inner - 78, 12)
+    dialog.label("l2", MARGIN, MARGIN + 26 + ROW, 72, 10, s("legal_name"))
+    dialog.edit("name", 86, MARGIN + 24 + ROW, inner - 78, 12)
+    dialog.label("err", MARGIN, MARGIN + 28 + 2 * ROW, inner, 10, "")
+
+    def accept():
+        fiscal = dialog.get("fiscal").strip()
+        name = dialog.get("name").strip()
+        classified = validators.classify(fiscal)
+        if classified.kind is None or not classified.valid:
+            dialog.set_label("err", s("fiscal"))
+            return
+        if not name:
+            dialog.set_label("err", s("legal_name"))
+            return
+        dialog.finish({
+            "cpfCnpj": fiscal,
+            "nomeRazaoSocial": name,
+            "categoriaPfPj": "PF" if classified.kind == "cpf" else "PJ",
+        })
+
+    y = height - BUTTON_H - MARGIN
+    dialog.button("cancel", width - 2 * BUTTON_W - 2 * MARGIN, y, BUTTON_W,
+                  BUTTON_H, s("cancel"), lambda: dialog.finish(None))
+    dialog.button("ok", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
+                  s("ok"), accept)
+    return dialog.show(parent_window(frame))
+
+
+def run_upgrade(ctx, frame, store, s, stage):
+    """
+    Pick a plan, then hand off to Stripe in the browser.
+
+    A desktop dialog cannot take a card and must not try — those details
+    belong on Stripe's own page, over their TLS, inside their PCI scope. So
+    the whole job here is choosing a plan and opening a URL.
+
+    Without this, running out of allowance is simply a dead end: the send
+    window can say "sem envios disponíveis" and offer nothing further, while a
+    Drive user in the same position gets a plan picker.
+    """
+    width = 300
+    height = 156
+    dialog = Dialog(ctx, s("upgrade_title"), width, height)
+    inner = width - 2 * MARGIN
+
+    dialog.label("intro", MARGIN, MARGIN, inner, 10, s("upgrade_intro"))
+    dialog.listctl("plans", MARGIN, MARGIN + 14, inner, 52,
+                   [s("plan_row") % (p["name"], p["docs"], p["monthly"])
+                    for p in api.PLANS])
+    y = MARGIN + 70
+    dialog.label("l1", MARGIN, y + 2, 60, 10, s("billing"))
+    dialog.listbox("freq", 70, y, inner - 62, 12,
+                   [s("monthly"), s("annual")], 0)
+
+    def go():
+        index = dialog.selected_index("plans")
+        if index < 0:
+            msgbox.error(ctx, frame, s("pick_a_plan"), s("app"))
+            return
+        plan = api.PLANS[index]["name"]
+        frequency = ("Mensal", "Anual")[max(0, dialog.selected_index("freq"))]
+
+        # Asked before the form is drawn, so the majority — anyone signing in
+        # with an existing SignDocs account — never sees it at all.
+        probe = busy(ctx, parent_window(frame), s("busy_checkout"),
+                     lambda: api.has_fiscal(store, stage=stage))
+        if not _report(ctx, frame, probe, s):
+            return
+
+        fiscal = None
+        if not probe.value:
+            fiscal = fiscal_dialog(ctx, frame, s)
+            if fiscal is None:
+                return
+
+        result = busy(ctx, parent_window(frame), s("busy_checkout"),
+                      lambda: api.create_checkout(store, plan, frequency,
+                                                  fiscal, stage=stage))
+        if not _report(ctx, frame, result, s):
+            return
+        url = result.value
+        if not url:
+            msgbox.error(ctx, frame, s("error"), s("app"))
+            return
+
+        dialog.finish(True)
+        # webbrowser.open can fail on a minimal desktop with no
+        # x-www-browser, and silently: it returns False rather than raising.
+        # Left unhandled that strands someone one click from paying, so fall
+        # back to handing them the link.
+        opened = False
+        try:
+            import webbrowser
+            opened = webbrowser.open(url)
+        except Exception:
+            opened = False
+        if opened:
+            msgbox.info(ctx, frame, s("checkout_opened"), s("app"))
+        else:
+            copy_to_clipboard(ctx, url)
+            msgbox.info(ctx, frame, "%s\n\n%s" % (s("checkout_link"), url),
+                        s("app"))
+
+    y = height - BUTTON_H - MARGIN
+    dialog.button("cancel", width - 2 * BUTTON_W - 2 * MARGIN, y, BUTTON_W,
+                  BUTTON_H, s("cancel"), lambda: dialog.finish(False))
+    dialog.button("go", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
+                  s("ok"), go)
+    return dialog.show(parent_window(frame))
+
+
 # ------------------------------------------------------------- send dialog
 def send_dialog(ctx, frame, store, s, state):
     """
@@ -170,12 +299,23 @@ def send_dialog(ctx, frame, store, s, state):
     # read as a rendering fault.
     quota_text = strings.quota_line(s, state.get("quota"))
     quota_h = 12 if quota_text else 0
+    exhausted = strings.quota_exhausted(state.get("quota"))
 
     height = 190 + quota_h
     dialog = Dialog(ctx, s("send_title"), width, height)
 
     if quota_text:
-        dialog.label("quota", MARGIN, MARGIN, inner, 10, quota_text)
+        # The upgrade button appears only once the allowance is actually
+        # spent. Standing next to a healthy balance it would just be an advert
+        # in a tool the user is trying to work in.
+        label_w = inner - (BUTTON_W + 12) if exhausted else inner
+        dialog.label("quota", MARGIN, MARGIN, label_w, 10, quota_text)
+        if exhausted:
+            dialog.button(
+                "upgrade", width - BUTTON_W - MARGIN, MARGIN - 2, BUTTON_W,
+                BUTTON_H - 2, s("upgrade"),
+                lambda: run_upgrade(ctx, frame, store, s,
+                                    config.current_stage(store)))
 
     top = MARGIN + quota_h
     dialog.label("l0", MARGIN, top + 2, 70, 10, s("sender"))

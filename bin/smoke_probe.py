@@ -272,6 +272,27 @@ def main():
         # Reaching the pending list without abandoning a half-filled form.
         check("send dialog links to the pending list",
               "history" in built.get(s("send_title"), []))
+        # The upgrade affordance is gated on the allowance actually being
+        # spent; next to a healthy balance it would just be an advert.
+        check("send dialog hides the upgrade button while quota remains",
+              "upgrade" not in built.get(s("send_title"), []))
+
+        ui_dialogs.send_dialog(ctx, None, store, s, dict(state, quota={
+            "allowed": False,
+            "quota": {"allowed": False, "source": "shared_free_pool",
+                      "used": 3, "remaining": 0, "limit": 3},
+            "user": {"email": "a@b.com", "plan": "Gratuito"}}))
+        check("send dialog offers an upgrade once the allowance is spent",
+              "upgrade" in built.get(s("send_title"), []))
+
+        ui_dialogs.run_upgrade(ctx, None, store, s, "hml")
+        check("upgrade dialog builds",
+              "plans" in built.get(s("upgrade_title"), [])
+              and "freq" in built.get(s("upgrade_title"), []))
+
+        ui_dialogs.fiscal_dialog(ctx, None, s)
+        check("fiscal dialog builds",
+              "fiscal" in built.get(s("fiscal_title"), []))
 
         ui_dialogs.review_dialog(ctx, None, s, state, "contrato.pdf")
         check("review dialog builds",

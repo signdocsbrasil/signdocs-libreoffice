@@ -10,7 +10,7 @@ request — from inside the extension, at least.
 
 import pytest
 
-from signdocs import history, sync
+from signdocs import api, history, sync
 from signdocs.httpclient import HttpError, NetworkError
 from signdocs.store import JsonStore
 
@@ -182,3 +182,96 @@ def test_stages_do_not_leak_into_each_other(store, log):
     assert sync.pending_count(store, "prod") == 0
     sync.refresh_pending(store, STAGE, status_fn=status("COMPLETED"))
     assert sync.pending_count(store, "prod") == 0
+
+
+# ------------------------------------------------------------- batching
+def batch(sessions=(), envelopes=(), dropped=()):
+    def fn(store_, session_ids=(), envelope_ids=(), stage=None):
+        fn.calls.append((list(session_ids), list(envelope_ids)))
+        return {"sessions": list(sessions), "envelopes": list(envelopes),
+                "droppedIds": list(dropped)}
+    fn.calls = []
+    return fn
+
+
+def test_the_whole_list_resolves_in_one_call(store, log):
+    fn = batch(sessions=[{"sessionId": "ss_1", "status": "COMPLETED"}],
+               envelopes=[{"envelopeId": "env_2", "status": "CANCELLED"}])
+    entries, checked, failed = sync._refresh_batched(
+        store, STAGE, history.History(store, STAGE), batch_fn=fn)
+
+    # The point of the endpoint: two rows, one round trip.
+    assert len(fn.calls) == 1
+    assert fn.calls[0] == (["ss_1"], ["env_2"])
+    assert (checked, failed) == (2, 0)
+    by_id = {e["id"]: e["status"] for e in entries}
+    assert by_id == {"ss_1": history.COMPLETED, "env_2": history.CANCELLED}
+
+
+def test_sessions_and_envelopes_go_to_their_own_lists(store, log):
+    fn = batch()
+    sync._refresh_batched(store, STAGE, history.History(store, STAGE), batch_fn=fn)
+    sessions, envelopes = fn.calls[0]
+    assert sessions == ["ss_1"] and envelopes == ["env_2"]
+
+
+def test_more_than_one_batch_is_sliced_not_truncated(store):
+    log = history.History(store, STAGE)
+    # history caps at 25, so fill it and confirm nothing is silently dropped.
+    for i in range(history.MAX):
+        log.add({"id": "ss_%02d" % i, "kind": "session", "filename": "f.pdf"})
+    fn = batch()
+    sync._refresh_batched(store, STAGE, log, batch_fn=fn)
+    sent = [i for call in fn.calls for i in call[0]]
+    assert len(sent) == history.MAX
+    assert len(set(sent)) == history.MAX
+    assert all(len(call[0]) <= api.PENDING_BATCH for call in fn.calls)
+
+
+def test_a_dropped_id_stays_pending_rather_than_being_guessed(store, log):
+    """
+    `droppedIds` is the server declining to answer — the id belongs to someone
+    else, or it has aged out. Those are indistinguishable here, and only the
+    second is actionable, so the row must not be retired on the strength of it.
+    """
+    fn = batch(dropped=["ss_1", "env_2"])
+    entries, checked, failed = sync._refresh_batched(
+        store, STAGE, history.History(store, STAGE), batch_fn=fn)
+    assert (checked, failed) == (0, 2)
+    assert all(e["status"] == history.PENDING for e in entries)
+
+
+def test_a_failed_batch_falls_back_rather_than_reporting_success(store, log):
+    def boom(*a, **k):
+        raise HttpError(429, "slow down")
+
+    assert sync._refresh_batched(
+        store, STAGE, history.History(store, STAGE), batch_fn=boom) is None
+
+
+def test_refresh_pending_uses_the_batch_by_default(store, log, monkeypatch):
+    calls = []
+
+    def fake(store_, session_ids=(), envelope_ids=(), stage=None):
+        calls.append((list(session_ids), list(envelope_ids)))
+        return {"sessions": [{"sessionId": "ss_1", "status": "COMPLETED"}],
+                "envelopes": [], "droppedIds": []}
+
+    monkeypatch.setattr(api, "pending_statuses", fake)
+    _, checked, _ = sync.refresh_pending(store, STAGE)
+    assert len(calls) == 1
+    assert checked == 1
+
+
+def test_refresh_pending_falls_back_to_one_call_per_row(store, log, monkeypatch):
+    # An older deployment without the route, or a 429: a slow refresh beats
+    # none, so the per-row path has to still work.
+    def unavailable(*a, **k):
+        raise HttpError(404, "no such route")
+
+    monkeypatch.setattr(api, "pending_statuses", unavailable)
+    monkeypatch.setattr(api, "status_of",
+                        lambda s, kind, ident, stage=None: {"status": "COMPLETED"})
+    entries, checked, failed = sync.refresh_pending(store, STAGE)
+    assert (checked, failed) == (2, 0)
+    assert all(e["status"] == history.COMPLETED for e in entries)
