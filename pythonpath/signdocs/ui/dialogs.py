@@ -161,16 +161,29 @@ def send_dialog(ctx, frame, store, s, state):
     both call out.
     """
     width = 300
-    height = 190
-    dialog = Dialog(ctx, s("send_title"), width, height)
     inner = width - 2 * MARGIN
 
-    dialog.label("l0", MARGIN, MARGIN + 2, 70, 10, s("sender"))
-    dialog.edit("sender", 80, MARGIN, inner - 72, 12, state.get("sender", ""))
-    dialog.label("hint", MARGIN, MARGIN + 14, inner, 10, s("sender_hint"),
+    # Shown before any effort is invested in the form, because that is the
+    # only moment the number can still change what the user does. Omitted
+    # entirely when the lookup failed: the send is allowed to proceed either
+    # way, since the server is the authority on quota, and an empty row would
+    # read as a rendering fault.
+    quota_text = strings.quota_line(s, state.get("quota"))
+    quota_h = 12 if quota_text else 0
+
+    height = 190 + quota_h
+    dialog = Dialog(ctx, s("send_title"), width, height)
+
+    if quota_text:
+        dialog.label("quota", MARGIN, MARGIN, inner, 10, quota_text)
+
+    top = MARGIN + quota_h
+    dialog.label("l0", MARGIN, top + 2, 70, 10, s("sender"))
+    dialog.edit("sender", 80, top, inner - 72, 12, state.get("sender", ""))
+    dialog.label("hint", MARGIN, top + 14, inner, 10, s("sender_hint"),
                  MultiLine=True)
 
-    y = MARGIN + 28
+    y = top + 28
     dialog.label("l1", MARGIN, y + 2, 70, 10, s("sig_type"))
     dialog.listbox("profile", 80, y, inner - 72, 12,
                    [s(k) for k in PROFILE_KEYS],
@@ -489,6 +502,18 @@ def run_send(ctx, frame, store):
     if state["profile"] not in PROFILE_KEYS:
         state["profile"] = "click_only"
 
+    # Read the plan once and carry it in `state`, so the review→Voltar loop
+    # does not re-query on every pass. Off the main thread like every other
+    # call: HTTP on the dispatch thread freezes the whole office.
+    #
+    # Fail-soft deliberately. This is a display, and the server enforces the
+    # quota whatever the extension believes; letting a failed lookup block a
+    # send the user is entitled to make would turn a convenience into an
+    # outage. A `None` here simply omits the line.
+    info = busy(ctx, parent_window(frame), s("busy_status"),
+                lambda: api.init_session(store, stage=stage))
+    state["quota"] = info.value if info is not None and info.ok else None
+
     # One key for the whole attempt, reused if the user retries after a
     # failure: quota is a single pool and is not refunded on cancel, so a
     # fresh key per attempt would bill a network blip twice.
@@ -621,8 +646,26 @@ def run_history(ctx, frame, store):
 
 def run_settings(ctx, frame, store):
     s = strings.for_office(ctx)
+    connected = oauth.is_connected(store)
+
+    # This is the screen someone opens to ask "what plan am I on", so the
+    # answer is fetched rather than remembered — a cached figure here would go
+    # stale exactly when it matters, after a send or an upgrade. Only asked
+    # when there is an identity to ask about, and never fatal: settings must
+    # still open when the network is down, since switching stage is how a user
+    # gets themselves out of a broken environment.
+    quota_text = None
+    if connected:
+        info = busy(ctx, parent_window(frame), s("busy_status"),
+                    lambda: api.init_session(store))
+        if info is not None and info.ok:
+            quota_text = strings.quota_line(s, info.value)
+        else:
+            quota_text = s("quota_unknown")
+
     width = 260
-    height = 110
+    quota_h = 30 if quota_text else 0
+    height = 110 + quota_h
     dialog = Dialog(ctx, s("settings_title"), width, height)
     inner = width - 2 * MARGIN
     stages = ("prod", "hml")
@@ -636,9 +679,18 @@ def run_settings(ctx, frame, store):
     dialog.edit("sender", 80, MARGIN + ROW, inner - 72, 12,
                 store.get(config.STORAGE["sender_email"]) or "")
 
-    connected = oauth.is_connected(store)
     dialog.label("state", MARGIN, MARGIN + 2 * ROW + 4, inner, 10,
                  s("connected_as") if connected else s("not_connected"))
+
+    if quota_text:
+        dialog.label("quota", MARGIN, MARGIN + 3 * ROW + 2, inner, 10,
+                     quota_text)
+        # Said out loud because the number is not what it looks like: the
+        # allowance is one pool across the app and every integration, so a
+        # figure shown inside the LibreOffice extension is not a LibreOffice
+        # budget.
+        dialog.label("quota_note", MARGIN, MARGIN + 4 * ROW, inner, 18,
+                     s("quota_shared"), MultiLine=True)
 
     def do_disconnect():
         oauth.disconnect(store)

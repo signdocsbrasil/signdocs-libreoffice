@@ -130,6 +130,32 @@ _STRINGS = {
     "stage_hml": {"pt": "Homologação (testes)", "en": "Homologation (testing)",
                   "es": "Homologación (pruebas)"},
     "error": {"pt": "Erro", "en": "Error", "es": "Error"},
+
+    # -- plan and quota
+    "plan": {"pt": "Plano", "en": "Plan", "es": "Plan"},
+    "quota_line": {"pt": "Plano %s · restam %d de %d envios",
+                   "en": "%s plan · %d of %d sends left",
+                   "es": "Plan %s · quedan %d de %d envíos"},
+    "quota_line_noplan": {"pt": "Restam %d de %d envios",
+                          "en": "%d of %d sends left",
+                          "es": "Quedan %d de %d envíos"},
+    "quota_credits": {"pt": "Créditos avulsos · %d disponíveis",
+                      "en": "Pay-per-use credits · %d available",
+                      "es": "Créditos sueltos · %d disponibles"},
+    "quota_blocked": {"pt": "Sem envios disponíveis neste período.",
+                      "en": "No sends available in this period.",
+                      "es": "Sin envíos disponibles en este período."},
+    "quota_unknown": {"pt": "Não foi possível consultar o seu plano.",
+                      "en": "Could not read your plan.",
+                      "es": "No se pudo consultar tu plan."},
+    "quota_shared": {
+        "pt": "A cota é uma só, compartilhada com o aplicativo e as demais "
+              "integrações.",
+        "en": "The allowance is a single pool, shared with the app and every "
+              "other integration.",
+        "es": "La cuota es una sola, compartida con la aplicación y las demás "
+              "integraciones.",
+    },
 }
 
 #: Profile keys in the order the dropdown offers them.
@@ -184,3 +210,55 @@ class Strings(object):
 
 def for_office(ctx):
     return Strings(office_lang(ctx))
+
+
+def _as_int(value):
+    """
+    An int that is genuinely an int.
+
+    `isinstance(True, int)` is True in Python, and a bool arriving where a
+    count belongs would render as "restam 1 de 3" — plausible enough that
+    nobody would question it. Reject bools explicitly.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def quota_line(s, info):
+    """
+    One line describing the plan and what is left of it, or None.
+
+    `info` is the `/init-session` response verbatim. Returning None when there
+    is nothing trustworthy to say lets the caller omit the line entirely
+    rather than draw a placeholder — an empty row reads as a rendering bug,
+    and a wrong number is worse than no number when it concerns billing.
+
+    `limit` is taken from the server and never derived from the plan name.
+    They genuinely disagree: a planless user is written a `Gratuito` customer
+    record whose `getPlanLimit` would say 5, while the quota that is actually
+    enforced comes from the shared free pool and is 3.
+    """
+    if not isinstance(info, dict):
+        return None
+    quota = info.get("quota")
+    if not isinstance(quota, dict):
+        return None
+
+    remaining = _as_int(quota.get("remaining"))
+    limit = _as_int(quota.get("limit"))
+    if remaining is None or limit is None:
+        return None
+
+    # `allowed` is the server's own decision and outranks arithmetic: a
+    # blocked channel gate reports remaining > 0 and still refuses the send.
+    if quota.get("allowed") is False or remaining <= 0:
+        return s("quota_blocked")
+
+    if quota.get("source") == "credits":
+        return s("quota_credits") % remaining
+
+    plan = (info.get("user") or {}).get("plan") if isinstance(info.get("user"), dict) else None
+    if plan:
+        return s("quota_line") % (plan, remaining, limit)
+    return s("quota_line_noplan") % (remaining, limit)

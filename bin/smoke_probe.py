@@ -258,6 +258,17 @@ def main():
         ui_dialogs.send_dialog(ctx, None, store, s, state)
         check("send dialog builds",
               "signers" in built.get(s("send_title"), []))
+        # Fail-soft: no quota read means no row at all, not an empty one.
+        check("send dialog omits the plan line when the lookup failed",
+              "quota" not in built.get(s("send_title"), []))
+
+        ui_dialogs.send_dialog(ctx, None, store, s, dict(state, quota={
+            "allowed": True,
+            "quota": {"allowed": True, "source": "paid_plan", "used": 12,
+                      "remaining": 68, "limit": 80},
+            "user": {"email": "a@b.com", "plan": "Iniciante 80"}}))
+        check("send dialog shows the plan line when the quota is known",
+              "quota" in built.get(s("send_title"), []))
 
         ui_dialogs.review_dialog(ctx, None, s, state, "contrato.pdf")
         check("review dialog builds",
@@ -335,9 +346,11 @@ def main():
         "busy": ui_dialogs.busy,
         "export": sd_intake.export_pdf,
         "send": sd_api.send,
+        "init": sd_api.init_session,
     }
 
     def fake_send_dialog(c, f, st, s_, state):
+        captured["quota_state"] = state.get("quota")
         state["sender"] = "remetente@ex.com.br"
         state["profile"] = "click_plus_otp"
         state["order"] = "SEQUENTIAL"
@@ -364,6 +377,11 @@ def main():
         sd_intake.export_pdf = lambda doc: {
             "content": "QkFTRTY0", "filename": "contrato.pdf", "module": "writer"}
         sd_api.send = fake_send
+        sd_api.init_session = lambda store_, stage=None: {
+            "allowed": True,
+            "quota": {"allowed": True, "source": "paid_plan", "used": 12,
+                      "remaining": 68, "limit": 80},
+            "user": {"email": "a@b.com", "plan": "Iniciante 80"}}
 
         flow_store = JsonStore()
         sd_config.set_stage(flow_store, "prod")
@@ -383,6 +401,11 @@ def main():
         check("flow minted an idempotency key",
               bool(captured.get("kwargs", {}).get("idempotency_key")))
         check("flow passed both signers", len(captured.get("signers", [])) == 2)
+        # The plan has to be in hand before the form is drawn, or the number
+        # arrives too late to change what the user does.
+        check("flow read the plan before drawing the send form",
+              (captured.get("quota_state") or {}).get("user", {}).get("plan")
+              == "Iniciante 80")
 
         recorded = sd_history.History(flow_store, "prod").list()
         check("flow recorded the send in history",
@@ -401,6 +424,7 @@ def main():
         ui_dialogs.busy = originals["busy"]
         sd_intake.export_pdf = originals["export"]
         sd_api.send = originals["send"]
+        sd_api.init_session = originals["init"]
 
     print("")
     if failures:
