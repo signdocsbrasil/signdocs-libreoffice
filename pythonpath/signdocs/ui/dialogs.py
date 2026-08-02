@@ -232,6 +232,17 @@ def send_dialog(ctx, frame, store, s, state):
         if not state["signers"]:
             msgbox.error(ctx, frame, s("no_signers"), s("app"))
             return
+
+        # Warn, do not block. The server said no, so this send is very likely
+        # to be refused — better to say so here than after the signers are
+        # typed and the PDF exported. But the read is a snapshot: a plan bought
+        # in the browser a minute ago, or a period that has just rolled over,
+        # would make it wrong, and a hard block would leave the user with no
+        # way past a stale answer. The server remains the authority either way.
+        if strings.quota_exhausted(state.get("quota")):
+            if not msgbox.confirm(ctx, frame, s("quota_confirm"), s("app")):
+                return
+
         dialog.finish("review")
 
     dialog.button("review", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,

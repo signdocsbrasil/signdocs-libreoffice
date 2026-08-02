@@ -171,6 +171,17 @@ _STRINGS = {
     "quota_unknown": {"pt": "Não foi possível consultar o seu plano.",
                       "en": "Could not read your plan.",
                       "es": "No se pudo consultar tu plan."},
+    "quota_confirm": {
+        "pt": "Sem envios disponíveis neste período. O servidor deve "
+              "recusar este envio.\n\nCancelar um envio anterior não devolve "
+              "a cota.\n\nContinuar mesmo assim?",
+        "en": "No sends available in this period. The server will most "
+              "likely refuse this one.\n\nCancelling an earlier send does not "
+              "give the allowance back.\n\nContinue anyway?",
+        "es": "Sin envíos disponibles en este período. El servidor "
+              "probablemente rechazará este envío.\n\nCancelar un envío "
+              "anterior no devuelve la cuota.\n\n¿Continuar de todos modos?",
+    },
     "quota_shared": {
         "pt": "A cota é uma só, compartilhada com o aplicativo e as demais "
               "integrações.",
@@ -285,3 +296,27 @@ def quota_line(s, info):
     if plan:
         return s("quota_line") % (plan, remaining, limit)
     return s("quota_line_noplan") % (remaining, limit)
+
+
+def quota_exhausted(info):
+    """
+    True only when the server has actually said no.
+
+    Kept next to `quota_line` so one module owns the reading of this payload.
+
+    Deliberately not the same thing as `quota_line` returning None. That means
+    the lookup failed and nothing is known; this means it succeeded and the
+    answer was no. Conflating them would let a timed-out status call stop a
+    send the user is perfectly entitled to make, which is a worse failure than
+    the one being prevented — so absent, unreadable or partial data is never
+    exhausted.
+    """
+    if not isinstance(info, dict):
+        return False
+    quota = info.get("quota")
+    if not isinstance(quota, dict):
+        return False
+    if quota.get("allowed") is False:
+        return True
+    remaining = _as_int(quota.get("remaining"))
+    return remaining is not None and remaining <= 0

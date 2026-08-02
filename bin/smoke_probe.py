@@ -325,6 +325,21 @@ def main():
         finally:
             probe_api.status_of = original_status
 
+        # msgbox.confirm resolves three UNO constants at call time, and it is
+        # only ever called from inside a button handler -- where the office
+        # swallows an exception and the click reads as a no-op. Nothing else
+        # in the suite imports these, so a rename upstream would surface as
+        # "the quota warning silently stopped appearing".
+        try:
+            from com.sun.star.awt.MessageBoxButtons import BUTTONS_YES_NO
+            from com.sun.star.awt.MessageBoxResults import YES
+            from com.sun.star.awt.MessageBoxType import QUERYBOX
+            confirm_ok = None not in (BUTTONS_YES_NO, YES, QUERYBOX)
+        except Exception as exc:
+            confirm_ok = False
+            print("   confirm constants: %s" % exc)
+        check("msgbox.confirm's UNO constants resolve", confirm_ok)
+
         # The pending list. Driven with the real sync.refresh_pending so the
         # dialog, the reconciliation and the filter are exercised together —
         # only the network is stubbed. busy() has to run inline here: with

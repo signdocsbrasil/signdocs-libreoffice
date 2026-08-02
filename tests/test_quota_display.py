@@ -109,6 +109,51 @@ def test_absent_plan_name_does_not_print_an_empty_slot(s):
     assert not line.startswith("Plano ·")
 
 
+# ------------------------------------------------------------- exhausted
+def test_exhausted_when_remaining_is_zero():
+    assert strings.quota_exhausted(info(remaining=0, limit=3)) is True
+
+
+def test_exhausted_when_the_server_says_not_allowed():
+    assert strings.quota_exhausted(info(allowed=False, remaining=3)) is True
+
+
+def test_not_exhausted_with_allowance_left():
+    assert strings.quota_exhausted(info(remaining=1, limit=3)) is False
+
+
+@pytest.mark.parametrize("unknown", [
+    None, {}, "nope", 42,
+    {"quota": None},
+    {"quota": {}},
+    {"quota": {"limit": 3}},                       # no remaining
+    {"quota": {"remaining": None}},
+    {"quota": {"remaining": "0"}},                 # a string, not a count
+])
+def test_an_unknown_quota_is_never_treated_as_exhausted(unknown):
+    """
+    The distinction the whole gate rests on.
+
+    `quota_line` returning None means the lookup failed and nothing is known;
+    exhausted means it succeeded and the answer was no. Conflating them would
+    let a timed-out status call stop a send the user is entitled to make —
+    a worse failure than the one being prevented.
+    """
+    assert strings.quota_exhausted(unknown) is False
+
+
+def test_a_blocked_quota_both_reads_blocked_and_gates(s):
+    # The line the user sees and the decision to warn must not disagree.
+    payload = info(allowed=False, remaining=0, limit=3)
+    assert strings.quota_line(s, payload) == s("quota_blocked")
+    assert strings.quota_exhausted(payload) is True
+
+
+def test_credits_are_not_exhausted_while_any_remain():
+    assert strings.quota_exhausted(
+        info(source="credits", remaining=7, limit=7)) is False
+
+
 # ---------------------------------------------------------------- locale
 @pytest.mark.parametrize("lang", ["pt", "en", "es"])
 def test_every_language_renders_each_branch(lang):
@@ -126,7 +171,8 @@ def test_every_language_renders_each_branch(lang):
 
 def test_quota_keys_exist_in_all_three_languages():
     for key in ("plan", "quota_line", "quota_line_noplan", "quota_credits",
-                "quota_blocked", "quota_unknown", "quota_shared"):
+                "quota_blocked", "quota_unknown", "quota_shared",
+                "quota_confirm"):
         for lang in ("pt", "en", "es"):
             value = strings.Strings(lang)(key)
             assert value and value != key, (key, lang)
