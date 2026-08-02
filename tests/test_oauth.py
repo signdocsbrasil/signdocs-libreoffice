@@ -84,13 +84,13 @@ def test_unpack_state_rejects_a_non_object():
 
 # -------------------------------------------------------- authorize URL
 def test_authorize_url_targets_our_own_login_domain():
-    url = oauth.authorize_url("http://127.0.0.1:8712/callback", "chal", "st")
+    url = oauth.authorize_url("prod", "http://127.0.0.1:8712/callback", "chal", "st")
     query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
 
     # Users type their password here, so it must be our hostname and not an
     # amazoncognito.com one.
     assert url.startswith("https://login.signdocs.com.br/oauth2/authorize?")
-    assert query["client_id"] == [config.COGNITO["client_id"]]
+    assert query["client_id"] == [config.STAGES["prod"]["client_id"]]
     assert query["response_type"] == ["code"]
     assert query["redirect_uri"] == ["http://127.0.0.1:8712/callback"]
     assert query["code_challenge_method"] == ["S256"]
@@ -102,12 +102,12 @@ def test_authorize_url_targets_our_own_login_domain():
 def test_authorize_url_localises_the_login_page():
     import urllib.parse as up
     q = up.parse_qs(up.urlparse(
-        oauth.authorize_url("http://127.0.0.1:8712/callback", "c", "s")).query)
+        oauth.authorize_url("prod", "http://127.0.0.1:8712/callback", "c", "s")).query)
     # Defaults to Brazilian Portuguese rather than Cognito's English default.
     assert q["lang"] == ["pt-BR"]
 
     q = up.parse_qs(up.urlparse(
-        oauth.authorize_url("http://127.0.0.1:8712/callback", "c", "s", "en")).query)
+        oauth.authorize_url("prod", "http://127.0.0.1:8712/callback", "c", "s", "en")).query)
     assert q["lang"] == ["en"]
 
 
@@ -124,10 +124,13 @@ def test_connect_passes_the_language_through(monkeypatch, store):
     assert seen["lang"] == ["es"]
 
 
-def test_login_is_stage_independent():
-    # One Cognito pool serves prod and hml; only the add-on API differs.
-    assert "hml" not in config.COGNITO["domain"]
-    assert config.STAGES["prod"]["api"] != config.STAGES["hml"]["api"]
+def test_each_stage_signs_in_against_its_own_pool():
+    prod = oauth.authorize_url("prod", "http://127.0.0.1:8712/callback", "c", "s")
+    hml = oauth.authorize_url("hml", "http://127.0.0.1:8712/callback", "c", "s")
+    assert prod.startswith("https://login.signdocs.com.br/")
+    assert hml.startswith("https://login-hml.signdocs.com.br/")
+    # A production credential must not open homologação data, nor the reverse.
+    assert config.STAGES["prod"]["client_id"] not in hml
 
 
 # ------------------------------------------------------------- loopback
@@ -188,7 +191,7 @@ def test_connect_completes_against_a_real_loopback_socket(monkeypatch, store):
     assert exchanged["url"] == "https://login.signdocs.com.br/oauth2/token"
     assert exchanged["grant_type"] == "authorization_code"
     assert exchanged["code"] == "auth-code-1"
-    assert exchanged["client_id"] == config.COGNITO["client_id"]
+    assert exchanged["client_id"] == config.STAGES["prod"]["client_id"]
     # PKCE: the verifier, not the challenge, goes to the token endpoint.
     assert len(exchanged["code_verifier"]) >= 43
     assert exchanged["redirect_uri"].startswith("http://127.0.0.1:")

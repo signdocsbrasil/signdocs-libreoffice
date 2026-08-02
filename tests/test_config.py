@@ -83,33 +83,44 @@ def test_sessions_are_namespaced_per_stage():
 
 
 # ------------------------------------------------------------------ login
-def test_login_is_shared_across_stages():
-    # One Cognito pool serves prod and hml, so there is no per-stage login
-    # host. Adding one would be wrong, not merely redundant.
-    assert config.COGNITO["domain"] == "https://login.signdocs.com.br"
-    assert "hml" not in config.COGNITO["domain"]
+def test_each_stage_has_its_own_pool_and_login_host():
+    """
+    backend-sign-docs deploys one Cognito pool per Amplify branch — master is
+    production (421 users), dev is homologação (6). Sharing one login between
+    stages would let production credentials open homologação data and the
+    reverse, which is the separation staging exists to provide.
+    """
+    prod, hml = config.STAGES["prod"], config.STAGES["hml"]
+    assert prod["login"] == "https://login.signdocs.com.br"
+    assert hml["login"] == "https://login-hml.signdocs.com.br"
+    assert prod["login"] != hml["login"]
+    # Different pools mean different app clients; reusing one would not even
+    # work, since the audience is bound per pool.
+    assert prod["client_id"] != hml["client_id"]
 
 
 def test_login_uses_our_own_domain_not_amazoncognito():
-    # Users type their SignDocs password on this page; an amazoncognito.com
+    # Users type their SignDocs password on these pages; an amazoncognito.com
     # host reads as phishing and is exactly what a procurement reviewer would
     # flag.
-    assert "amazoncognito.com" not in config.COGNITO["domain"]
+    for stage in ("prod", "hml"):
+        assert "amazoncognito.com" not in config.STAGES[stage]["login"]
+        assert config.STAGES[stage]["login"].endswith(".signdocs.com.br")
 
 
 def test_email_scope_is_requested():
     # The add-on tier resolves identity, quota and ownership from the email
     # claim, which is only present when this scope is granted.
-    assert "email" in config.COGNITO["scopes"]
-    assert "openid" in config.COGNITO["scopes"]
+    assert "email" in config.SCOPES
+    assert "openid" in config.SCOPES
 
 
-def test_client_id_is_present_and_public():
-    # A public client: shipping the id is safe precisely because there is no
-    # secret. If a secret ever appears in this dict, something has gone very
-    # wrong.
-    assert config.COGNITO["client_id"]
-    assert "client_secret" not in config.COGNITO
+def test_no_client_secret_anywhere():
+    # Public clients: shipping the id is safe precisely because there is no
+    # secret. If one ever appears here, something has gone very wrong.
+    for stage in ("prod", "hml"):
+        assert config.STAGES[stage]["client_id"]
+        assert "client_secret" not in config.STAGES[stage]
 
 
 # --------------------------------------------------------------- loopback

@@ -141,7 +141,7 @@ def _selftest(ctx, frame):
 
     stage = config.current_stage(_store_or_none(ctx))
     report["stage"] = stage
-    report["login_host"] = config.COGNITO["domain"]
+    report["login_host"] = config.STAGES[stage]["login"]
     report["api_host"] = config.STAGES[stage]["api"]
 
     # Any HTTP status means DNS, TCP and TLS all worked, which is what this is

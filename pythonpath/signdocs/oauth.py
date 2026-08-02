@@ -170,25 +170,30 @@ def _await_callback(server, timeout, now=time.time):
 
 
 # ------------------------------------------------------------------ tokens
-def authorize_url(redirect_uri, challenge, state, lang=None):
+def authorize_url(stage, redirect_uri, challenge, state, lang=None):
     """
-    Build the managed-login URL.
+    Build the managed-login URL for a stage.
+
+    The pool differs per stage, so the login host and client id do too —
+    signing in with production credentials must not open homologação data,
+    nor the reverse.
 
     `lang` localises the sign-in page. A Brazilian user meeting an English
     login form on their way into a Brazilian e-signature product is a jarring
     first impression, and it is one query parameter to avoid.
     """
+    endpoints = config.STAGES[stage]
     params = {
         "response_type": "code",
-        "client_id": config.COGNITO["client_id"],
+        "client_id": endpoints["client_id"],
         "redirect_uri": redirect_uri,
-        "scope": " ".join(config.COGNITO["scopes"]),
+        "scope": " ".join(config.SCOPES),
         "state": state,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
         "lang": lang or config.DEFAULT_LOGIN_LANG,
     }
-    return config.COGNITO["domain"] + "/oauth2/authorize?" + urllib.parse.urlencode(params)
+    return endpoints["login"] + "/oauth2/authorize?" + urllib.parse.urlencode(params)
 
 
 def _remember(store, stage, tokens):
@@ -247,7 +252,7 @@ def connect(store, stage=None, open_browser=None, timeout=CONSENT_TIMEOUT,
         state = pack_state(nonce)
 
         open_browser(
-            authorize_url(redirect_uri, challenge_for(verifier), state, lang))
+            authorize_url(stage, redirect_uri, challenge_for(verifier), state, lang))
         result = _await_callback(server, timeout)
     finally:
         server.server_close()
@@ -272,11 +277,11 @@ def connect(store, stage=None, open_browser=None, timeout=CONSENT_TIMEOUT,
     if not code:
         raise AuthorizationFailed("Resposta de login inválida.")
 
-    tokens = post_form(config.COGNITO["domain"] + "/oauth2/token", {
+    tokens = post_form(config.STAGES[stage]["login"] + "/oauth2/token", {
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": redirect_uri,
-        "client_id": config.COGNITO["client_id"],
+        "client_id": config.STAGES[stage]["client_id"],
         "code_verifier": verifier,
     })
     return _remember(store, stage, tokens or {})
@@ -293,10 +298,12 @@ def refresh(store, stage=None):
         raise NotConnected("Não conectado.")
 
     try:
-        tokens = post_form(config.COGNITO["domain"] + "/oauth2/token", {
+        tokens = post_form(config.STAGES[stage]["login"] + "/oauth2/token", {
             "grant_type": "refresh_token",
             "refresh_token": token,
-            "client_id": config.COGNITO["client_id"],
+            # A refresh token from the other stage's pool cannot be redeemed
+            # here, which is the separation working rather than a bug.
+            "client_id": config.STAGES[stage]["client_id"],
         })
     except HttpError:
         # Rejected by Cognito, so it is dead — keeping it would reproduce the

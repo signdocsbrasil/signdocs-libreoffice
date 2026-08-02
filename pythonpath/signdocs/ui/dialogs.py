@@ -79,8 +79,9 @@ def ensure_connected(ctx, frame, store, s):
     dialog = Dialog(ctx, s("connect_title"), 230, 78)
     dialog.label("t", MARGIN, MARGIN, 230 - 2 * MARGIN, 24, s("not_connected"),
                  MultiLine=True)
+    stage = config.current_stage(store)
     dialog.label("e", MARGIN, MARGIN + 26, 230 - 2 * MARGIN, 10,
-                 "%s: %s" % (s("stage"), config.current_stage(store)))
+                 "%s: %s" % (s("stage"), stage))
     dialog.button("cancel", 230 - 2 * BUTTON_W - 2 * MARGIN, 56, BUTTON_W,
                   BUTTON_H, s("cancel"), lambda: dialog.finish(False))
     dialog.button("ok", 230 - BUTTON_W - MARGIN, 56, BUTTON_W, BUTTON_H,
@@ -92,7 +93,7 @@ def ensure_connected(ctx, frame, store, s):
     # Open the login page in the same language as the office UI.
     lang = config.LOGIN_LANG.get(s.lang, config.DEFAULT_LOGIN_LANG)
     result = busy(ctx, parent_window(frame), s("busy_connect"),
-                  lambda: oauth.connect(store, lang=lang))
+                  lambda: oauth.connect(store, stage, lang=lang))
     return _report(ctx, frame, result, s)
 
 

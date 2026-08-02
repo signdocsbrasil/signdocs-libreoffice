@@ -11,9 +11,17 @@ which SignDocs environment its operator intends.
 STAGES = {
     "prod": {
         "api": "https://libreoffice-api.signdocs.com.br",
+        "login": "https://login.signdocs.com.br",
+        # Public client on the production pool (us-east-1_7wz2lnW8F). Not a
+        # credential: the client has no secret, which is what makes shipping
+        # it in an extension safe.
+        "client_id": "7eufhdc7d2khb857n9amvpaidt",
     },
     "hml": {
         "api": "https://libreoffice-api-hml.signdocs.com.br",
+        "login": "https://login-hml.signdocs.com.br",
+        # Public client on the homologação pool (us-east-1_smgTkPiS3).
+        "client_id": "trmc0ascars41ln0o9s7fhf4i",
     },
 }
 
@@ -24,21 +32,16 @@ API_PREFIX = "/libreoffice"
 
 #: Sign-in, via Cognito managed login on our own domain.
 #:
-#: Stage-independent on purpose: **one Cognito pool serves both prod and
-#: hml**, so the login host and app client are the same either way. Only the
-#: add-on API differs per stage. Do not "helpfully" add a per-stage login
-#: host — there isn't one.
-COGNITO = {
-    "domain": "https://login.signdocs.com.br",
-    # A public client. This id is not a credential — the client has no secret,
-    # which is what makes shipping it in an extension safe. Cognito implements
-    # no RFC 7591, so unlike the previous broker there is nothing to register
-    # at runtime.
-    "client_id": "7eufhdc7d2khb857n9amvpaidt",
-    # `email` is the one that matters: the add-on tier reads the email claim
-    # from the ID token to establish identity, quota and ownership.
-    "scopes": ("openid", "email", "profile"),
-}
+#: **Per stage, and it has to be.** backend-sign-docs deploys a separate
+#: Cognito pool per Amplify branch — master/prod is us-east-1_7wz2lnW8F (421
+#: users) and dev/hml is us-east-1_smgTkPiS3 (6). Pointing both stages at one
+#: pool would let production credentials open homologação data and the
+#: reverse, which is precisely the separation staging exists to provide.
+#:
+#: (The SSM parameter /signdocs/hml/cognito-user-pool-id currently names the
+#: PROD pool. That governs external-api's admin auth, not this, but it is the
+#: reason the shared-pool assumption looked correct at first glance.)
+SCOPES = ("openid", "email", "profile")
 
 #: LibreOffice UI language -> Cognito managed-login `lang` code.
 #:
