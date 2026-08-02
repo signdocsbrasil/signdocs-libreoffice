@@ -269,6 +269,9 @@ def main():
             "user": {"email": "a@b.com", "plan": "Iniciante 80"}}))
         check("send dialog shows the plan line when the quota is known",
               "quota" in built.get(s("send_title"), []))
+        # Reaching the pending list without abandoning a half-filled form.
+        check("send dialog links to the pending list",
+              "history" in built.get(s("send_title"), []))
 
         ui_dialogs.review_dialog(ctx, None, s, state, "contrato.pdf")
         check("review dialog builds",

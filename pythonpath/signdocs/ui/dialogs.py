@@ -210,6 +210,18 @@ def send_dialog(ctx, frame, store, s, state):
                   s("remove"), lambda: _remove_signer(dialog, state))
 
     y = height - BUTTON_H - MARGIN
+    # Same wording as the menu entry, so the two are recognisably the same
+    # place. Opens over this dialog rather than replacing it: `state` is the
+    # form the user has already filled in, and losing it to go and look
+    # something up would be the same trap as rebuilding on Voltar.
+    #
+    # Most useful in exactly the state that prompts the question — the
+    # allowance is spent, and the reasonable next move is to see what is
+    # still outstanding. Note that cancelling one does not give the send
+    # back: the pool is not refunded on cancel.
+    dialog.button("history", MARGIN, y, BUTTON_W + 30, BUTTON_H,
+                  s("history_title"),
+                  lambda: run_history(ctx, frame, store))
     dialog.button("cancel", width - 2 * BUTTON_W - 2 * MARGIN, y, BUTTON_W,
                   BUTTON_H, s("cancel"), lambda: dialog.finish(None))
 
