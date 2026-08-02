@@ -335,6 +335,13 @@ def main():
                                      "filename": "contrato.pdf"})
             check("track dialog builds",
                   "download" in built.get(s("track_title"), []))
+            # The status label must be translated, while cancel-enablement
+            # still keys off the raw wire value. Rendering ACTIVE verbatim is
+            # what a user reports; matching a translated string is what would
+            # silently disable cancel in en/es.
+            check("track dialog translates the wire status",
+                  ui_strings.api_status(s, "ACTIVE") != "ACTIVE"
+                  and ui_strings.api_status(s, "ACTIVE") != "")
             # Give the poller a moment to notice the stop flag.
             deadline = time.time() + 10
             while threading.active_count() > before and time.time() < deadline:

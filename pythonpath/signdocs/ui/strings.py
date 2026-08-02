@@ -152,6 +152,12 @@ _STRINGS = {
     # -- send states. The keys are history.py's own status values, so a row
     # can be labelled with s("status_" + entry["status"]).
     "status_pending": {"pt": "Pendente", "en": "Pending", "es": "Pendiente"},
+    # ACTIVE is the API's word for "nobody has signed yet", which as a label
+    # says nothing to the person reading it. Name the thing being waited on.
+    "status_active": {"pt": "Aguardando assinatura",
+                      "en": "Awaiting signature",
+                      "es": "Esperando firma"},
+    "status_created": {"pt": "Criado", "en": "Created", "es": "Creado"},
     "status_completed": {"pt": "Concluído", "en": "Completed",
                          "es": "Completado"},
     "status_cancelled": {"pt": "Cancelado", "en": "Cancelled",
@@ -315,6 +321,37 @@ class Strings(object):
 
 def for_office(ctx):
     return Strings(office_lang(ctx))
+
+
+#: Wire status -> string key. Sessions report ACTIVE/COMPLETED/CANCELLED/
+#: EXPIRED/FAILED; envelopes add CREATED.
+API_STATUS = {
+    "CREATED": "status_created",
+    "ACTIVE": "status_active",
+    "COMPLETED": "status_completed",
+    "CANCELLED": "status_cancelled",
+    "EXPIRED": "status_expired",
+    "FAILED": "status_failed",
+}
+
+
+def api_status(s, raw):
+    """
+    A wire status as something a person can read.
+
+    Falls back to the raw value for anything unrecognised rather than blanking
+    the field: if the API grows a status, showing `SUSPENDED` is unhelpful but
+    showing nothing at all looks like the dialog failed to load. Same reasoning
+    as `Strings.__call__` returning the key it could not find.
+
+    Only ever for display — the raw value still drives whether cancel is
+    offered and whether the local row is retired, and those must not be
+    matched against a translated string.
+    """
+    if not raw:
+        return ""
+    key = API_STATUS.get(str(raw).strip().upper())
+    return s(key) if key else str(raw)
 
 
 def _as_int(value):

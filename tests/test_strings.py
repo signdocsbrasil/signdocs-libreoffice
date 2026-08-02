@@ -90,3 +90,48 @@ def test_profile_order_matches_the_api_profile_map():
 def test_every_profile_has_a_label():
     for key in strings.PROFILE_ORDER:
         assert strings.Strings("pt")(key) != key
+
+
+# ------------------------------------------------------------ api status
+def test_every_wire_status_has_a_readable_label():
+    """
+    Sessions report ACTIVE/COMPLETED/CANCELLED/EXPIRED/FAILED; envelopes add
+    CREATED. Any of these reaching a dialog verbatim is a bug the user sees.
+    """
+    s = strings.Strings("pt")
+    for raw in ("CREATED", "ACTIVE", "COMPLETED", "CANCELLED", "EXPIRED",
+                "FAILED"):
+        label = strings.api_status(s, raw)
+        assert label and label != raw
+        assert label.upper() != raw
+
+
+def test_active_is_named_for_what_is_being_waited_on():
+    # "ACTIVE" is the API's word for "nobody has signed yet" and says nothing
+    # to the person reading it.
+    assert strings.api_status(strings.Strings("pt"), "ACTIVE") == "Aguardando assinatura"
+    assert strings.api_status(strings.Strings("en"), "ACTIVE") == "Awaiting signature"
+
+
+def test_unknown_status_shows_the_raw_value_rather_than_blank():
+    # If the API grows a status, "SUSPENDED" is unhelpful but an empty field
+    # looks like the dialog failed to load.
+    assert strings.api_status(strings.Strings("pt"), "SUSPENDED") == "SUSPENDED"
+
+
+def test_absent_status_renders_empty():
+    s = strings.Strings("pt")
+    assert strings.api_status(s, None) == ""
+    assert strings.api_status(s, "") == ""
+
+
+def test_lookup_is_case_and_space_insensitive():
+    s = strings.Strings("pt")
+    assert strings.api_status(s, " active ") == strings.api_status(s, "ACTIVE")
+
+
+@pytest.mark.parametrize("lang", ["pt", "en", "es"])
+def test_every_wire_status_is_translated_in_every_language(lang):
+    s = strings.Strings(lang)
+    for raw in strings.API_STATUS:
+        assert strings.api_status(s, raw) not in ("", raw)

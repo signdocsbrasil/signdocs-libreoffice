@@ -551,7 +551,7 @@ def track_dialog(ctx, frame, store, s, entry, document_model=None):
         """Main thread only — called through on_main_thread by the poller."""
         latest["status"] = status
         try:
-            dialog.model.getByName("status").Label = str(status.get("status") or "")
+            dialog.set_label("status", strings.api_status(s, status.get("status")))
             total = status.get("total") or 0
             if total:
                 dialog.model.getByName("progress").Label = "%s: %d/%d" % (
