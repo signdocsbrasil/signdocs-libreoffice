@@ -131,6 +131,29 @@ _STRINGS = {
                   "es": "Homologación (pruebas)"},
     "error": {"pt": "Erro", "en": "Error", "es": "Error"},
 
+    # -- send states. The keys are history.py's own status values, so a row
+    # can be labelled with s("status_" + entry["status"]).
+    "status_pending": {"pt": "Pendente", "en": "Pending", "es": "Pendiente"},
+    "status_completed": {"pt": "Concluído", "en": "Completed",
+                         "es": "Completado"},
+    "status_cancelled": {"pt": "Cancelado", "en": "Cancelled",
+                         "es": "Cancelado"},
+    "status_expired": {"pt": "Expirado", "en": "Expired", "es": "Expirado"},
+    "status_failed": {"pt": "Falhou", "en": "Failed", "es": "Falló"},
+    "only_pending": {"pt": "Somente pendentes", "en": "Pending only",
+                     "es": "Solo pendientes"},
+    "pending_count": {"pt": "%d pendente(s) de %d",
+                      "en": "%d pending of %d",
+                      "es": "%d pendiente(s) de %d"},
+    "busy_refresh": {"pt": "Atualizando os envios pendentes…",
+                     "en": "Refreshing pending sends…",
+                     "es": "Actualizando los envíos pendientes…"},
+    "refresh_failed": {
+        "pt": "%d envio(s) não puderam ser consultados. Continuam pendentes.",
+        "en": "%d send(s) could not be checked. They remain pending.",
+        "es": "%d envío(s) no pudieron consultarse. Siguen pendientes.",
+    },
+
     # -- plan and quota
     "plan": {"pt": "Plano", "en": "Plan", "es": "Plan"},
     "quota_line": {"pt": "Plano %s · restam %d de %d envios",

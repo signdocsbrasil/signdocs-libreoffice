@@ -321,6 +321,50 @@ def main():
                   % (before, threading.active_count()))
         finally:
             probe_api.status_of = original_status
+
+        # The pending list. Driven with the real sync.refresh_pending so the
+        # dialog, the reconciliation and the filter are exercised together —
+        # only the network is stubbed. busy() has to run inline here: with
+        # show() faked there is no modal loop to pump the AsyncCallback, so
+        # the work would never start.
+        from signdocs import config as probe_config  # noqa: E402
+        from signdocs import history as probe_history  # noqa: E402
+
+        hist_store = JsonStore()
+        probe_config.set_stage(hist_store, "prod")
+        hist_log = probe_history.History(hist_store, "prod")
+        hist_log.add({"id": "ss_done", "kind": "session", "filename": "a.pdf"})
+        hist_log.add({"id": "ss_open", "kind": "session", "filename": "b.pdf"})
+
+        def hist_status(store_, kind, ident, stage=None):
+            return {"status": "COMPLETED" if ident == "ss_done" else "ACTIVE"}
+
+        original_busy_h = ui_dialogs.busy
+        original_status_h = probe_api.status_of
+        probe_api.status_of = hist_status
+        ui_dialogs.busy = lambda c, p, m, work: async_work.Result(value=work())
+        try:
+            ui_dialogs.run_history(ctx, None, hist_store)
+        finally:
+            ui_dialogs.busy = original_busy_h
+            probe_api.status_of = original_status_h
+
+        history_controls = built.get(s("history_title"), [])
+        check("pending list builds", "items" in history_controls)
+        check("pending list offers a pending-only filter",
+              "only_pending" in history_controls)
+        check("pending list shows an outstanding count",
+              "count" in history_controls)
+        check("pending list offers a manual refresh",
+              "refresh" in history_controls)
+
+        after = {e["id"]: e["status"] for e in hist_log.list()}
+        check("opening the list retired the finished send",
+              after.get("ss_done") == probe_history.COMPLETED,
+              "ss_done -> %s" % after.get("ss_done"))
+        check("opening the list left the outstanding send cancellable",
+              after.get("ss_open") == probe_history.PENDING,
+              "ss_open -> %s" % after.get("ss_open"))
     finally:
         widgets.Dialog.show = original_show
 

@@ -150,6 +150,20 @@ class Dialog(object):
             index = previous if 0 <= previous < len(items) else 0
             control.SelectedItems = (index,)
 
+    def get_state(self, name):
+        """Checkbox state as a bool. UNO models it as 0/1/2 (2 = tristate)."""
+        return bool(getattr(self.model.getByName(name), "State", 0))
+
+    def set_label(self, name, text):
+        """
+        Retext a label or button after construction.
+
+        Distinct from `set`, which writes `Text` on an edit field. Labels carry
+        `Label`, and assigning the wrong one fails silently — the control keeps
+        its old caption and nothing is raised.
+        """
+        self.model.getByName(name).Label = text
+
     def enable(self, name, enabled=True):
         self.model.getByName(name).Enabled = bool(enabled)
 

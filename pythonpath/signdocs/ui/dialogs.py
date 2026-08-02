@@ -18,7 +18,7 @@ import threading
 import urllib.parse
 import uuid
 
-from signdocs import api, config, history, intake, oauth, validators
+from signdocs import api, config, history, intake, oauth, sync, validators
 from signdocs.ui import async_work, msgbox, strings
 from signdocs.ui.widgets import (
     BUTTON_H,
@@ -577,40 +577,80 @@ def _now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+def _history_line(s, entry):
+    return "%s — %s (%s)" % (
+        entry.get("filename") or "",
+        entry.get("kind") or "",
+        s("status_" + (entry.get("status") or history.PENDING)),
+    )
+
+
 def run_history(ctx, frame, store):
     s = strings.for_office(ctx)
     stage = config.current_stage(store)
     store_history = history.History(store, stage)
-    entries = store_history.list()
 
-    if not entries:
+    if not store_history.list():
         msgbox.info(ctx, frame, s("no_history"), s("app"))
         return
 
+    # Bring the pending rows up to date before drawing anything. Nothing else
+    # ever moves a row off `pending` — the tracking poller only runs while it
+    # is open on one row — so without this the list is a record of what was
+    # sent, not of what is outstanding, and every row reads pending forever.
+    #
+    # Costs one call per pending row and nothing at all when none are pending,
+    # which is the steady state: each pass retires the rows it resolves.
+    def refresh():
+        if not store_history.pending():
+            return None
+        result = busy(ctx, parent_window(frame), s("busy_refresh"),
+                      lambda: sync.refresh_pending(store, stage))
+        if result is None or not result.ok:
+            # Offline is not a reason to refuse to show the list; the rows
+            # simply stay as they were.
+            return None
+        return result.value
+
+    outcome = refresh()
+
     width = 320
-    height = 160
+    height = 176
     dialog = Dialog(ctx, s("history_title"), width, height)
     inner = width - 2 * MARGIN
 
-    def lines():
-        out = []
-        for entry in store_history.list():
-            out.append("%s — %s (%s)" % (
-                entry.get("filename") or "",
-                entry.get("kind") or "",
-                entry.get("status") or "",
-            ))
-        return out
+    # The listbox shows a filtered view, so a selection index means nothing
+    # without the exact rows it was drawn from. Keeping them together is what
+    # stops "cancel" from acting on a different document than the highlighted
+    # one once anything is hidden.
+    view = {"rows": []}
 
-    dialog.listctl("items", MARGIN, MARGIN, inner, height - 40, lines())
+    def redraw(keep_selection=False):
+        rows = store_history.list()
+        if dialog.get_state("only_pending"):
+            rows = [e for e in rows if e.get("status") == history.PENDING]
+        view["rows"] = rows
+        dialog.set_items("items", [_history_line(s, e) for e in rows],
+                         keep_selection=keep_selection)
+        total = len(store_history.list())
+        pending = len(store_history.pending())
+        dialog.set_label("count", s("pending_count") % (pending, total))
+
+    def selected():
+        index = dialog.selected_index("items")
+        if index < 0 or index >= len(view["rows"]):
+            return None
+        return view["rows"][index]
+
+    dialog.check("only_pending", MARGIN, MARGIN, inner - 90, 10,
+                 s("only_pending"))
+    dialog.label("count", width - 90, MARGIN, 90 - MARGIN, 10, "")
+    dialog.listctl("items", MARGIN, MARGIN + 14, inner, height - 56, [])
+    dialog.on_change("only_pending", lambda: redraw())
 
     def cancel_selected():
-        index = dialog.selected_index("items")
-        current = store_history.list()
-        if index < 0 or index >= len(current):
-            return
-        entry = current[index]
-        if entry.get("status") != history.PENDING:
+        entry = selected()
+        if entry is None or entry.get("status") != history.PENDING:
             return
         result = busy(ctx, parent_window(frame), s("busy_status"),
                       lambda: api.cancel(store, entry["kind"], entry["id"],
@@ -618,7 +658,7 @@ def run_history(ctx, frame, store):
         if not _report(ctx, frame, result, s):
             return
         store_history.mark_cancelled(entry["id"])
-        dialog.set_items("items", lines(), keep_selection=False)
+        redraw()
         preserved = result.value.get("preservedSignedCount") or 0
         if preserved:
             # Cancelling does not destroy signatures already collected, and
@@ -627,20 +667,31 @@ def run_history(ctx, frame, store):
                         "Assinaturas preservadas: %d" % preserved, s("app"))
 
     def track_selected():
-        index = dialog.selected_index("items")
-        current = store_history.list()
-        if index < 0 or index >= len(current):
+        entry = selected()
+        if entry is None:
             return
-        track_dialog(ctx, frame, store, s, current[index])
-        dialog.set_items("items", lines(), keep_selection=False)
+        track_dialog(ctx, frame, store, s, entry)
+        redraw()
+
+    def refresh_clicked():
+        again = refresh()
+        redraw(keep_selection=True)
+        if again and again[2]:
+            msgbox.info(ctx, frame, s("refresh_failed") % again[2], s("app"))
 
     y = height - BUTTON_H - MARGIN
     dialog.button("track", MARGIN, y, BUTTON_W + 8, BUTTON_H,
                   s("track_title"), track_selected)
     dialog.button("cancel_send", MARGIN + BUTTON_W + 12, y, BUTTON_W + 20,
                   BUTTON_H, s("cancel_send"), cancel_selected)
+    dialog.button("refresh", MARGIN + 2 * BUTTON_W + 36, y, BUTTON_W, BUTTON_H,
+                  s("refresh"), refresh_clicked)
     dialog.button("close", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
                   s("close"), lambda: dialog.finish(True))
+
+    redraw()
+    if outcome and outcome[2]:
+        msgbox.info(ctx, frame, s("refresh_failed") % outcome[2], s("app"))
     dialog.show(parent_window(frame))
 
 
