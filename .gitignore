@@ -1,6 +1,14 @@
 # Build output
 *.oxt
 
+# Support artefact written by bin/diagnostico.py on the machine it diagnoses.
+# Describes that machine, not this project, and is regenerated every run.
+signdocs-diagnostico.json
+
+# Hand-assembled bundle for cross-platform smoke testing. Contains a built
+# .oxt, so it is output rather than source.
+signdocs-libreoffice-teste-*.zip
+
 # Internal notes — not shipped, not published
 CLAUDE.md
 
