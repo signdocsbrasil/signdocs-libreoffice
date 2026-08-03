@@ -326,3 +326,39 @@ def test_cancel_still_raises_on_a_real_error(store, recorder):
     recorder(HttpError(500, "boom"))
     with pytest.raises(HttpError):
         api.cancel(store, "session", "sess-1")
+
+
+# ------------------------------------------------------- withdrawn profile
+def test_biometric_is_not_offered(store):
+    """
+    The API accepts BIOMETRIC, but it is provisioned per tenant by an
+    administrator and has no live clients. Offering it in a desktop dropdown
+    hands the user a choice that fails at send time for a reason they can
+    neither see nor fix.
+    """
+    from signdocs.ui import strings
+
+    assert "biometric" not in api.PROFILES
+    assert "biometric" not in strings.PROFILE_ORDER
+    assert "BIOMETRIC" not in api.PROFILES.values()
+
+
+def test_sending_biometric_is_refused_before_any_request(store, recorder):
+    # Named explicitly rather than relying on the generic unknown-profile
+    # guard: this is the regression that matters if someone reinstates it in
+    # the dropdown without first granting it on the tenant.
+    rec = recorder()
+    with pytest.raises(api.ValidationError):
+        api.send(store, DOC, [signer()], profile="biometric")
+    assert rec.calls == []
+
+
+@pytest.mark.parametrize("key,wire", [
+    ("click_only", "CLICK_ONLY"),
+    ("click_plus_otp", "CLICK_PLUS_OTP"),
+    ("digital_certificate", "DIGITAL_CERTIFICATE"),
+])
+def test_the_remaining_profiles_still_map(store, recorder, key, wire):
+    rec = recorder({"sessionId": "s", "url": "u", "clientSecret": "c"})
+    api.send(store, DOC, [signer()], profile=key)
+    assert rec.calls[0]["payload"]["policy"]["profile"] == wire

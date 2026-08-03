@@ -33,10 +33,19 @@ from signdocs import config, oauth, validators
 from signdocs.httpclient import HttpError, get_bytes, request
 
 #: UI value -> policy profile.
+#: Signature profiles this client will send.
+#:
+#: BIOMETRIC is deliberately absent although the API accepts it. The profile
+#: is provisioned per tenant by an administrator and has no live clients, so
+#: offering it in a desktop dropdown hands the user a choice that fails at
+#: send time for a reason they cannot see or fix. Re-adding it means granting
+#: it on the shared libreoffice tenant and validating end to end first, not
+#: putting it back in the list and finding out afterwards.
+#:
+#: Kept in step with strings.PROFILE_ORDER; a test asserts the two agree.
 PROFILES = {
     "click_only": "CLICK_ONLY",
     "click_plus_otp": "CLICK_PLUS_OTP",
-    "biometric": "BIOMETRIC",
     "digital_certificate": "DIGITAL_CERTIFICATE",
 }
 

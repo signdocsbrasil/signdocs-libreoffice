@@ -52,8 +52,6 @@ _STRINGS = {
     "click_plus_otp": {"pt": "Clique + código por e-mail",
                        "en": "Click + e-mail code",
                        "es": "Clic + código por correo"},
-    "biometric": {"pt": "Biometria facial", "en": "Facial biometrics",
-                  "es": "Biometría facial"},
     "digital_certificate": {"pt": "Certificado digital ICP-Brasil",
                             "en": "ICP-Brasil digital certificate",
                             "es": "Certificado digital ICP-Brasil"},
@@ -270,7 +268,7 @@ _STRINGS = {
 }
 
 #: Profile keys in the order the dropdown offers them.
-PROFILE_ORDER = ("click_only", "click_plus_otp", "digital_certificate", "biometric")
+PROFILE_ORDER = ("click_only", "click_plus_otp", "digital_certificate")
 
 
 def _lang_from_locale(locale):

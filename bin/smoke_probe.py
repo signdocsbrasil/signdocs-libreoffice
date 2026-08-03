@@ -475,6 +475,11 @@ def main():
 
         flow_store = JsonStore()
         sd_config.set_stage(flow_store, "prod")
+        # An existing install may have "biometric" saved as its preferred
+        # profile from before it was withdrawn. That must degrade to a working
+        # default, not crash on a dropdown index or reach the wire, so seed it
+        # here and let the flow run for real.
+        flow_store.set(sd_config.STORAGE["profile"], "biometric")
         doc = desktop.loadComponentFromURL("private:factory/swriter", "_blank", 0, ())
         try:
             ui_dialogs.run_send(ctx, doc.getCurrentController().getFrame(), flow_store)
@@ -484,6 +489,13 @@ def main():
         check("flow reached api.send", "kwargs" in captured)
         check("flow passed the chosen profile",
               captured.get("kwargs", {}).get("profile") == "click_plus_otp")
+        # The withdrawn profile must not survive into a request, and the
+        # stale preference must be rewritten rather than left to resurface.
+        check("a saved 'biometric' preference never reaches the wire",
+              captured.get("kwargs", {}).get("profile") != "biometric")
+        check("the stale profile preference is healed on disk",
+              flow_store.get(sd_config.STORAGE["profile"]) != "biometric",
+              "stored -> %r" % flow_store.get(sd_config.STORAGE["profile"]))
         check("flow passed the chosen order",
               captured.get("kwargs", {}).get("order") == "SEQUENTIAL")
         check("flow passed the sender as owner",
