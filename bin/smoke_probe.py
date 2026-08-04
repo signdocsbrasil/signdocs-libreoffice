@@ -285,6 +285,16 @@ def main():
         check("send dialog offers an upgrade once the allowance is spent",
               "upgrade" in built.get(s("send_title"), []))
 
+        ui_dialogs.consent_dialog(ctx, None, s, {
+            "required": {"tos": "2.1", "privacy": "1.4"},
+            "urls": {"tos": "https://s/tos", "privacy": "https://s/pp"},
+            "stale": ["CONSENT_TOS", "CONSENT_PRIVACY"]})
+        consent_controls = built.get(s("consent_title"), [])
+        check("consent dialog builds", "accept" in consent_controls)
+        # Acceptance has to be of something the person can actually read.
+        check("consent dialog offers a way to read each policy",
+              "open0" in consent_controls and "open1" in consent_controls)
+
         ui_dialogs.run_upgrade(ctx, None, store, s, "hml")
         check("upgrade dialog builds",
               "plans" in built.get(s("upgrade_title"), [])
@@ -434,6 +444,7 @@ def main():
         "review_dlg": ui_dialogs.review_dialog,
         "result_dlg": ui_dialogs.result_dialog,
         "busy": ui_dialogs.busy,
+        "consent": ui_dialogs.ensure_policies_accepted,
         "export": sd_intake.export_pdf,
         "send": sd_api.send,
         "init": sd_api.init_session,
@@ -458,6 +469,9 @@ def main():
 
     try:
         ui_dialogs.ensure_connected = lambda *a, **k: True
+        consent_asked = []
+        ui_dialogs.ensure_policies_accepted = (
+            lambda c, f, st, s_, stage_: (consent_asked.append(stage_), True)[1])
         ui_dialogs.send_dialog = fake_send_dialog
         ui_dialogs.review_dialog = lambda *a, **k: "send"
         ui_dialogs.result_dialog = lambda *a, **k: True
@@ -487,6 +501,9 @@ def main():
             doc.close(False)
 
         check("flow reached api.send", "kwargs" in captured)
+        # The gate runs before the form, so a refusal costs the user nothing.
+        check("flow checked policy acceptance before sending",
+              consent_asked == ["prod"], "asked for stage(s): %r" % consent_asked)
         check("flow passed the chosen profile",
               captured.get("kwargs", {}).get("profile") == "click_plus_otp")
         # The withdrawn profile must not survive into a request, and the
@@ -524,6 +541,7 @@ def main():
         ui_dialogs.review_dialog = originals["review_dlg"]
         ui_dialogs.result_dialog = originals["result_dlg"]
         ui_dialogs.busy = originals["busy"]
+        ui_dialogs.ensure_policies_accepted = originals["consent"]
         sd_intake.export_pdf = originals["export"]
         sd_api.send = originals["send"]
         sd_api.init_session = originals["init"]

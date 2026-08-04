@@ -150,6 +150,122 @@ def _signer_line(index, signer):
     return label
 
 
+# ------------------------------------------------------------- consent
+#: Wire action -> the label and the key naming its URL and version.
+POLICY_LABELS = {
+    "CONSENT_TOS": ("consent_tos", "tos"),
+    "CONSENT_PRIVACY": ("consent_privacy", "privacy"),
+}
+
+
+def consent_dialog(ctx, frame, s, status):
+    """
+    Ask the user to accept the policies the server reports as stale.
+
+    Each one gets its own Open button, because acceptance has to be of a
+    document the person could actually read: a dialog that only says "I
+    accept" and offers no way to see what is being accepted is not consent,
+    and the record it produces would not be worth much either.
+
+    Returns True only on an explicit click of the accept button.
+    """
+    stale = status.get("stale") or []
+    width = 320
+    height = 76 + 16 * len(stale)
+    dialog = Dialog(ctx, s("consent_title"), width, height)
+    inner = width - 2 * MARGIN
+
+    dialog.label("intro", MARGIN, MARGIN, inner, 20, s("consent_intro"),
+                 MultiLine=True)
+
+    y = MARGIN + 26
+    for index, action in enumerate(stale):
+        label_key, url_key = POLICY_LABELS.get(action, (None, None))
+        if label_key is None:
+            continue
+        version = (status.get("required") or {}).get(url_key) or ""
+        url = (status.get("urls") or {}).get(url_key)
+        text = s(label_key)
+        if version:
+            text = "%s (v%s)" % (text, version)
+        dialog.label("p%d" % index, MARGIN, y + 2, inner - BUTTON_W - 8, 10, text)
+        if url:
+            dialog.button(
+                "open%d" % index, width - BUTTON_W - MARGIN, y, BUTTON_W,
+                BUTTON_H - 2, s("consent_open"),
+                lambda u=url: _open_policy(ctx, u))
+        y += 16
+
+    y = height - BUTTON_H - MARGIN
+    dialog.button("cancel", MARGIN, y, BUTTON_W, BUTTON_H, s("cancel"),
+                  lambda: dialog.finish(False))
+    dialog.button("accept", width - (BUTTON_W + 40) - MARGIN, y, BUTTON_W + 40,
+                  BUTTON_H, s("consent_accept"), lambda: dialog.finish(True))
+    return bool(dialog.show(parent_window(frame)))
+
+
+def _open_policy(ctx, url):
+    """
+    Show a policy in the browser, or put it on the clipboard if there is none.
+
+    webbrowser.open returns False rather than raising on a desktop with no
+    browser configured, and silently failing here would leave the user asked
+    to accept something they were given no way to read.
+    """
+    opened = False
+    try:
+        import webbrowser
+        opened = webbrowser.open(url)
+    except Exception:
+        opened = False
+    if not opened:
+        copy_to_clipboard(ctx, url)
+
+
+def ensure_policies_accepted(ctx, frame, store, s, stage):
+    """
+    True when the account may send. Blocks until the policies are accepted.
+
+    Fails **closed**, which is the opposite of how the quota reading behaves,
+    and deliberately: the quota is enforced server-side whatever the extension
+    believes, whereas nothing server-side refuses a send from someone who has
+    not accepted the terms. So if acceptance cannot be confirmed, this is the
+    only thing standing in the way, and a network error must not be treated as
+    a yes.
+    """
+    probe = busy(ctx, parent_window(frame), s("busy_consent"),
+                 lambda: api.policy_status(store, stage=stage))
+    if probe is None or not probe.ok:
+        msgbox.error(ctx, frame, s("consent_unavailable"), s("app"))
+        return False
+
+    status = probe.value
+    stale = status.get("stale") or []
+    if not stale:
+        return True
+
+    if not consent_dialog(ctx, frame, s, status):
+        msgbox.info(ctx, frame, s("consent_declined"), s("app"))
+        return False
+
+    def record():
+        required = status.get("required") or {}
+        urls = status.get("urls") or {}
+        for action in stale:
+            _, key = POLICY_LABELS.get(action, (None, None))
+            if key is None:
+                continue
+            api.policy_accept(store, action, required.get(key),
+                              url=urls.get(key), stage=stage)
+        return True
+
+    saved = busy(ctx, parent_window(frame), s("busy_consent_save"), record)
+    # A failed write means no record exists, so the gate has not been passed.
+    # Reporting success here would let the send proceed on an acceptance that
+    # was never stored.
+    return _report(ctx, frame, saved, s)
+
+
 # -------------------------------------------------------------- upgrade
 def fiscal_dialog(ctx, frame, s):
     """
@@ -660,6 +776,14 @@ def run_send(ctx, frame, store):
         return
 
     stage = config.current_stage(store)
+
+    # Before anything else, and before the quota read: this is the one gate
+    # that stops the flow outright, so asking after the user has filled in a
+    # form would waste their work. Nothing here is cached locally — the server
+    # owns which versions are current, and a policy can be reissued between
+    # two sends.
+    if not ensure_policies_accepted(ctx, frame, store, s, stage):
+        return
     state = {
         "sender": store.get(config.STORAGE["sender_email"]) or "",
         "profile": store.get(config.STORAGE["profile"]) or "click_only",

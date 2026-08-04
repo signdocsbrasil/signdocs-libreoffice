@@ -418,3 +418,47 @@ def create_checkout(store, plan, frequency="Mensal", fiscal=None, stage=None):
         payload["fiscal"] = fiscal
     result = _call(store, "POST", "/create-checkout", payload, stage) or {}
     return result.get("checkoutUrl")
+
+
+# ---------------------------------------------------------------- policies
+#: The two policies a user must accept before anything can be sent. DPA is
+#: absent on purpose: its click-through was retired across every channel, so
+#: asking for it here would reintroduce a gate the business removed.
+POLICY_ACTIONS = ("CONSENT_TOS", "CONSENT_PRIVACY")
+
+
+def policy_status(store, stage=None):
+    """
+    Which policies the signed-in account still has to accept.
+
+    Returns the server's response, whose `stale` list is the part that
+    matters: it names the policies whose accepted version is missing or
+    behind. An empty `stale` is the only thing that permits a send.
+    """
+    result = _call(store, "POST", "/policy-consent/status", {}, stage) or {}
+    return {
+        "required": result.get("required") or {},
+        "urls": result.get("urls") or {},
+        "accepted": result.get("accepted") or {},
+        "needsAcceptance": bool(result.get("needsAcceptance")),
+        "stale": [a for a in (result.get("stale") or [])
+                  if a in POLICY_ACTIONS],
+    }
+
+
+def policy_accept(store, action, version, url=None, stage=None):
+    """
+    Record acceptance of one policy at one version.
+
+    The caller's identity is taken from the ID token server-side and is not
+    sent here: this record is the evidence that a named person accepted a
+    named version, so the client does not get to nominate who that was.
+    """
+    if action not in POLICY_ACTIONS:
+        raise ValidationError("Política desconhecida: %r" % action)
+    if not version:
+        raise ValidationError("Versão da política ausente")
+    payload = {"action": action, "version": version}
+    if url:
+        payload["url"] = url
+    return _call(store, "POST", "/policy-consent/accept", payload, stage) or {}

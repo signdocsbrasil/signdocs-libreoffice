@@ -196,6 +196,52 @@ _STRINGS = {
     "quota_unknown": {"pt": "Não foi possível consultar o seu plano.",
                       "en": "Could not read your plan.",
                       "es": "No se pudo consultar tu plan."},
+    # -- policy consent
+    "consent_title": {"pt": "Termos e Privacidade", "en": "Terms and Privacy",
+                      "es": "Términos y Privacidad"},
+    "consent_intro": {
+        "pt": "Para enviar documentos, é preciso aceitar os documentos abaixo. "
+              "Abra e leia cada um antes de aceitar.",
+        "en": "To send documents you must accept the documents below. Open and "
+              "read each one before accepting.",
+        "es": "Para enviar documentos hay que aceptar los documentos de abajo. "
+              "Abre y lee cada uno antes de aceptar.",
+    },
+    "consent_tos": {"pt": "Termos de Uso", "en": "Terms of Use",
+                    "es": "Términos de Uso"},
+    "consent_privacy": {"pt": "Política de Privacidade",
+                        "en": "Privacy Policy",
+                        "es": "Política de Privacidad"},
+    "consent_open": {"pt": "Abrir", "en": "Open", "es": "Abrir"},
+    "consent_accept": {"pt": "Li e aceito", "en": "I have read and accept",
+                       "es": "He leído y acepto"},
+    "consent_declined": {
+        "pt": "Sem o aceite dos Termos de Uso e da Política de Privacidade não "
+              "é possível enviar documentos.",
+        "en": "Without accepting the Terms of Use and the Privacy Policy you "
+              "cannot send documents.",
+        "es": "Sin aceptar los Términos de Uso y la Política de Privacidad no "
+              "se pueden enviar documentos.",
+    },
+    "busy_consent": {"pt": "Verificando os termos aceitos…",
+                     "en": "Checking accepted terms…",
+                     "es": "Verificando los términos aceptados…"},
+    "busy_consent_save": {"pt": "Registrando o aceite…",
+                          "en": "Recording acceptance…",
+                          "es": "Registrando la aceptación…"},
+    # Deliberately blocking rather than warning. Unlike the quota reading,
+    # which is a display the server enforces anyway, nothing server-side
+    # refuses a send from a user who has not accepted -- so if the extension
+    # cannot confirm acceptance it must not proceed.
+    "consent_unavailable": {
+        "pt": "Não foi possível verificar o aceite dos termos. Tente de novo "
+              "quando houver conexão.",
+        "en": "Could not verify acceptance of the terms. Try again when you "
+              "have a connection.",
+        "es": "No se pudo verificar la aceptación de los términos. Inténtalo "
+              "de nuevo cuando haya conexión.",
+    },
+
     # -- upgrade
     "upgrade": {"pt": "Assinar plano", "en": "Subscribe", "es": "Suscribirse"},
     "upgrade_title": {"pt": "Assinar um plano", "en": "Choose a plan",
