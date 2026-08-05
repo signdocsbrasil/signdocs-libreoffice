@@ -17,7 +17,9 @@ could hang would defeat the purpose.
 Reads the .oxt as a zip rather than the installed copy, so it still reports
 when installation itself is what failed.
 
-    python.exe bin\\diagnostico.py [--stage hml]
+    Windows:  python.exe diagnostico.py --stage hml
+    macOS:    /Applications/LibreOffice.app/Contents/Resources/python diagnostico.py --stage hml
+    Linux:    python3 bin/diagnostico.py --stage hml
 """
 
 import io
