@@ -11,6 +11,9 @@ on:
     # extension registration or a PDF filter name under us — with nobody
     # having touched the repo.
     - cron: '0 7 * * 1'
+  # So the macOS job can be run on demand without waiting for a push or the
+  # weekly cron -- it is excluded from pushes (see package-macos).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -104,6 +107,18 @@ jobs:
     name: Package and install into a real LibreOffice (macOS)
     runs-on: macos-14
     timeout-minutes: 40
+    # Not on every push, for two reasons that point the same way. This account
+    # gets very few concurrent runners, and eight jobs competing on one push
+    # leaves the rest queued until GitHub cancels them at the 20-minute
+    # allocation timeout -- the scarce macOS runner loses that race first. And
+    # private repos bill macOS at 10x, so a per-push run would spend the
+    # monthly allowance on a platform whose risk does not change between
+    # commits.
+    #
+    # The weekly cron is the real driver: what breaks macOS is a runner-image
+    # or LibreOffice update, not our code. workflow_dispatch covers "I changed
+    # something and want to know now".
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
