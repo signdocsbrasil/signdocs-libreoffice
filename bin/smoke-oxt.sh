@@ -51,4 +51,8 @@ done
 	|| { echo "FAIL: office never accepted a UNO connection" >&2; cat "$PROFILE/soffice.log"; exit 1; }
 
 echo "probing"
-python3 bin/smoke_probe.py "$PORT"
+# The probe needs `import uno`, which only the office's own interpreter has.
+# On Linux python3-uno puts it on the system path, so plain python3 works. On
+# macOS everything lives inside the .app and the system python3 cannot see it,
+# so the caller points this at Contents/Resources/python instead.
+"${SIGNDOCS_UNO_PYTHON:-python3}" bin/smoke_probe.py "$PORT"
