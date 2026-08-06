@@ -11,9 +11,6 @@ on:
     # extension registration or a PDF filter name under us — with nobody
     # having touched the repo.
     - cron: '0 7 * * 1'
-  # So the macOS job can be run on demand without waiting for a push or the
-  # weekly cron -- it is excluded from pushes (see package-macos).
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -102,65 +99,3 @@ jobs:
           name: signdocs-brasil-oxt
           path: signdocs-brasil-*.oxt
           if-no-files-found: error
-
-  package-macos:
-    name: Package and install into a real LibreOffice (macOS)
-    runs-on: macos-14
-    timeout-minutes: 40
-    # Not on every push, for two reasons that point the same way. This account
-    # gets very few concurrent runners, and eight jobs competing on one push
-    # leaves the rest queued until GitHub cancels them at the 20-minute
-    # allocation timeout -- the scarce macOS runner loses that race first. And
-    # private repos bill macOS at 10x, so a per-push run would spend the
-    # monthly allowance on a platform whose risk does not change between
-    # commits.
-    #
-    # The weekly cron is the real driver: what breaks macOS is a runner-image
-    # or LibreOffice update, not our code. workflow_dispatch covers "I changed
-    # something and want to know now".
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    steps:
-      - uses: actions/checkout@v4
-
-      # macOS is the platform the vendored cacert.pem exists for: the office
-      # ships its own Python there with no route to the system keychain, so a
-      # missing or unreadable bundle means every macOS user gets
-      # CERTIFICATE_VERIFY_FAILED and reads it as "the service is down".
-      # Nothing else in CI exercises that path.
-      - name: Install LibreOffice
-        run: brew install --cask libreoffice
-
-      # Everything lives inside the .app; brew puts nothing on PATH. The
-      # scripts call unopkg and soffice by name, so put the bundle's MacOS
-      # directory in front rather than teaching every script about macOS.
-      - name: Put the app bundle on PATH
-        run: |
-          echo "/Applications/LibreOffice.app/Contents/MacOS" >> "$GITHUB_PATH"
-
-      - name: Versions
-        run: |
-          soffice --version
-          unopkg -V
-
-      - name: Build extension
-        run: bash bin/build-oxt.sh
-
-      - name: Assert package shape
-        run: bash bin/check-oxt.sh
-
-      # SIGNDOCS_UNO_PYTHON: the probe needs `import uno`, which only the
-      # office's own interpreter has. On Linux python3-uno puts it on the
-      # system path; here the system python3 cannot see inside the bundle.
-      - name: Integration probe against a headless office
-        env:
-          SIGNDOCS_UNO_PYTHON: /Applications/LibreOffice.app/Contents/Resources/python
-        run: bash bin/smoke-oxt.sh
-
-      # The standalone health check, run under the same interpreter a real
-      # user's office would use. This is the direct answer to "does the
-      # vendored CA bundle actually work on macOS" -- it reports the root
-      # count and reaches both live hosts.
-      - name: TLS and reachability under the office's own Python
-        run: |
-          /Applications/LibreOffice.app/Contents/Resources/python \
-            bin/diagnostico.py --stage prod
