@@ -225,22 +225,50 @@ def copy_to_clipboard(ctx, text):
         from com.sun.star.datatransfer import DataFlavor, XTransferable
 
         class _Text(unohelper.Base, XTransferable):
+            """
+            The same text offered as both UTF-16 and UTF-8.
+
+            Offering only UTF-16 is what LibreOffice's own examples show, and
+            it works perfectly for pastes back into the office. But an
+            external application asking the system clipboard for text gets
+            handed the only flavour on offer and decodes those bytes as UTF-8
+            — one NUL after every character. Pasting a signing link into a
+            terminal produced pages of `^@` gibberish, and the copy button had
+            reported success.
+
+            So the UTF-8 flavour is not a nicety: the entire point of that
+            button is pasting the link somewhere *outside* LibreOffice.
+            """
+
             def __init__(self, value):
                 self._value = value
-                flavor = DataFlavor()
-                flavor.MimeType = "text/plain;charset=utf-16"
-                flavor.HumanPresentableName = "Unicode text"
-                flavor.DataType = uno.getTypeByName("string")
-                self._flavor = flavor
+
+                utf16 = DataFlavor()
+                utf16.MimeType = "text/plain;charset=utf-16"
+                utf16.HumanPresentableName = "Unicode text"
+                # `string` lets UNO hand back a Python str and convert.
+                utf16.DataType = uno.getTypeByName("string")
+
+                utf8 = DataFlavor()
+                utf8.MimeType = "text/plain;charset=utf-8"
+                utf8.HumanPresentableName = "Plain text"
+                # A byte sequence, because the charset is already encoded.
+                utf8.DataType = uno.getTypeByName("[]byte")
+
+                self._flavors = (utf16, utf8)
 
             def getTransferData(self, flavor):  # noqa: N802 - UNO API name
+                mime = (getattr(flavor, "MimeType", "") or "").lower()
+                if "utf-8" in mime:
+                    return uno.ByteSequence(self._value.encode("utf-8"))
                 return self._value
 
             def getTransferDataFlavors(self):  # noqa: N802 - UNO API name
-                return (self._flavor,)
+                return self._flavors
 
             def isDataFlavorSupported(self, flavor):  # noqa: N802 - UNO API name
-                return flavor.MimeType == self._flavor.MimeType
+                mime = (getattr(flavor, "MimeType", "") or "").lower()
+                return any(f.MimeType.lower() == mime for f in self._flavors)
 
         clipboard = ctx.ServiceManager.createInstanceWithContext(
             "com.sun.star.datatransfer.clipboard.SystemClipboard", ctx
@@ -249,3 +277,27 @@ def copy_to_clipboard(ctx, text):
         return True
     except Exception:
         return False
+
+
+def _transferable_for(text):
+    """
+    The transferable `copy_to_clipboard` would put on the clipboard.
+
+    Exists so the smoke probe can assert both flavours round-trip. A real
+    clipboard needs a display, which CI does not have -- and the bug this
+    guards against was invisible from inside LibreOffice anyway.
+    """
+    holder = {}
+
+    def capture(transferable, owner=None):
+        holder["t"] = transferable
+
+    class _FakeClipboard(object):
+        setContents = staticmethod(capture)
+
+    import types
+    ctx = types.SimpleNamespace(
+        ServiceManager=types.SimpleNamespace(
+            createInstanceWithContext=lambda name, c: _FakeClipboard()))
+    copy_to_clipboard(ctx, text)
+    return holder.get("t")

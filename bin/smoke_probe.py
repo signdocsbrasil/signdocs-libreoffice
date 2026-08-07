@@ -363,6 +363,33 @@ def main():
         finally:
             probe_api.status_of = original_status
 
+        # The copy button exists to paste a signing link OUTSIDE LibreOffice.
+        # Offering only the UTF-16 flavour makes an external app decode those
+        # bytes as UTF-8 -- a NUL after every character -- and the button still
+        # reports success, so nothing catches it but a human pasting into a
+        # terminal. Assert both flavours round-trip.
+        try:
+            from com.sun.star.datatransfer import DataFlavor
+            link = "https://sign.signdocs.com.br/s/ss_probe?cs=ss_secret_x"
+            transferable = widgets._transferable_for(link)
+            mimes = [f.MimeType.lower() for f in transferable.getTransferDataFlavors()]
+            has_both = any("utf-16" in m for m in mimes) and any("utf-8" in m for m in mimes)
+            check("clipboard offers both utf-16 and utf-8", has_both, ", ".join(mimes))
+
+            f8 = DataFlavor()
+            f8.MimeType = "text/plain;charset=utf-8"
+            raw = transferable.getTransferData(f8)
+            as_bytes = bytes(raw.value) if hasattr(raw, "value") else bytes(raw)
+            check("utf-8 flavour round-trips without NUL padding",
+                  as_bytes.decode("utf-8") == link and b"\x00" not in as_bytes)
+
+            f16 = DataFlavor()
+            f16.MimeType = "text/plain;charset=utf-16"
+            check("utf-16 flavour still returns the string",
+                  transferable.getTransferData(f16) == link)
+        except Exception as exc:
+            check("clipboard flavours", False, str(exc))
+
         # msgbox.confirm resolves three UNO constants at call time, and it is
         # only ever called from inside a button handler -- where the office
         # swallows an exception and the click reads as a no-op. Nothing else
