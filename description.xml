@@ -18,9 +18,9 @@
   <version value="0.1.0"/>
 
   <display-name>
-    <name lang="pt-BR">SignDocs Brasil — assinatura eletrônica</name>
-    <name lang="en">SignDocs Brasil — electronic signature</name>
-    <name lang="es">SignDocs Brasil — firma electrónica</name>
+    <name lang="pt-BR">SignDocs Brasil — assinatura eletrônica e digital</name>
+    <name lang="en">SignDocs Brasil — electronic and digital signatures</name>
+    <name lang="es">SignDocs Brasil — firma electrónica y digital</name>
   </display-name>
 
   <icon>
