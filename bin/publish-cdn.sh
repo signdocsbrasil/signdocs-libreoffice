@@ -33,6 +33,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 BUCKET="${SIGNDOCS_CDN_BUCKET:-sigext-cdn-js-prod}"
+# The bucket is readable only through this distribution, so an upload is
+# invisible to users until the edge cache is invalidated.
+DISTRIBUTION="${SIGNDOCS_CDN_DISTRIBUTION:-E2VDJREOZ5NVQP}"
 PREFIX="libreoffice"
 BASE="https://cdn.signdocs.com.br/$PREFIX"
 DRY=0
@@ -100,6 +103,27 @@ aws s3 cp "$OXT" "s3://$BUCKET/$PREFIX/$OXT" \
   || fail "upload to s3://$BUCKET/$PREFIX/ failed"
 ok "uploaded to s3://$BUCKET/$PREFIX/$OXT"
 
+# Uploading to S3 is not publishing. CloudFront keeps serving the previous
+# object until its TTL expires or the path is invalidated -- on the first real
+# run of this script the verification below failed for exactly that reason,
+# with correct bytes in S3 and stale bytes at the edge. Invalidate, wait, and
+# only then verify, or the check races the cache and fails intermittently.
+INVALIDATION="$(aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" \
+                  --paths "/$PREFIX/*" --query 'Invalidation.Id' --output text 2>/dev/null)"
+if [ -z "$INVALIDATION" ]; then
+  fail "could not invalidate $DISTRIBUTION — the upload is in S3 but users still see the old file"
+fi
+ok "invalidation $INVALIDATION created"
+
+for _ in $(seq 1 60); do
+  STATUS="$(aws cloudfront get-invalidation --distribution-id "$DISTRIBUTION" \
+              --id "$INVALIDATION" --query 'Invalidation.Status' --output text 2>/dev/null)"
+  [ "$STATUS" = "Completed" ] && break
+  sleep 10
+done
+[ "${STATUS:-}" = "Completed" ] || fail "invalidation $INVALIDATION did not complete in 10 minutes"
+ok "edge cache cleared"
+
 # Fetch it back over the CDN and compare bytes. "The upload returned 0" is not
 # the same as "users can download this", and the difference is a broken
 # update for everyone.
@@ -116,6 +140,13 @@ fi
 ok "downloaded from the CDN and sha256 matches"
 
 echo
+if [ "$LIVE" = "$VERSION" ]; then
+  # Already consistent -- printing a three-step "next" that is a no-op teaches
+  # people to skip the instructions on the release where they matter.
+  echo "  Done. The feed already advertises $VERSION and now serves these exact"
+  echo "  bytes. Nothing further to deploy."
+  exit 0
+fi
 echo "  Binary is live. The feed still points at ${LIVE:-<unknown>}."
 echo
 echo "  To finish the release, in external-api:"
