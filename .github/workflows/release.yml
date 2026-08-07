@@ -68,6 +68,19 @@ jobs:
       - name: Integration probe against a headless office
         run: bash bin/smoke-oxt.sh
 
+      # Publishing the .oxt to the CDN is deliberately NOT done here.
+      # This repository is public, and the target bucket also serves the JS
+      # SDK that integrators embed in their own pages, plus the .oxt that
+      # LibreOffice auto-updates from — write access to it is effectively
+      # code execution on customer sites and on users' desktops. Giving a
+      # public repo's CI that reach is a bigger decision than the saved
+      # keystrokes justify, so the upload stays on a human's machine:
+      #
+      #     bash bin/publish-cdn.sh
+      #
+      # That script verifies the artefact matches HEAD, uploads it, downloads
+      # it back and compares sha256, then prints the feed bump to make in
+      # external-api. Order matters: binary first, feed second.
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
