@@ -241,8 +241,16 @@ def main():
     built = {}
     original_show = widgets.Dialog.show
 
+    built_models = {}
+
     def fake_show(self, parent=None):
-        built[self.model.Title] = list(self.model.getElementNames())
+        title = self.model.Title
+        built[title] = list(self.model.getElementNames())
+        for name in self.model.getElementNames():
+            try:
+                built_models[(title, name)] = self.model.getByName(name).ImplementationName
+            except Exception:
+                built_models[(title, name)] = ""
         return None
 
     widgets.Dialog.show = fake_show
@@ -272,6 +280,12 @@ def main():
         # Reaching the pending list without abandoning a half-filled form.
         check("send dialog links to the pending list",
               "history" in built.get(s("send_title"), []))
+        # The sender must be a LABEL, not an edit box. A box the user can
+        # change that changes nothing is the bug this replaced: the server
+        # sets `owner` from the verified identity and ignores the client.
+        sender_kind = built_models.get((s("send_title"), "sender"), "")
+        check("sender is a label, not an editable field",
+              "FixedText" in sender_kind, sender_kind or "<not built>")
         # The upgrade affordance is gated on the allowance actually being
         # spent; next to a healthy balance it would just be an advert.
         check("send dialog hides the upgrade button while quota remains",
@@ -479,7 +493,6 @@ def main():
 
     def fake_send_dialog(c, f, st, s_, state):
         captured["quota_state"] = state.get("quota")
-        state["sender"] = "remetente@ex.com.br"
         state["profile"] = "click_plus_otp"
         state["order"] = "SEQUENTIAL"
         state["signers"] = list(signers)
@@ -542,8 +555,11 @@ def main():
               "stored -> %r" % flow_store.get(sd_config.STORAGE["profile"]))
         check("flow passed the chosen order",
               captured.get("kwargs", {}).get("order") == "SEQUENTIAL")
-        check("flow passed the sender as owner",
-              captured.get("kwargs", {}).get("owner_email") == "remetente@ex.com.br")
+        # The client must not send an owner at all. The server sets it from the
+        # verified identity, so anything sent here is ignored -- and a UI that
+        # implied otherwise is the bug this replaced.
+        check("flow sends no owner from the client",
+              "owner_email" not in captured.get("kwargs", {}))
         check("flow minted an idempotency key",
               bool(captured.get("kwargs", {}).get("idempotency_key")))
         check("flow passed both signers", len(captured.get("signers", [])) == 2)
@@ -560,8 +576,10 @@ def main():
         check("history record leaks neither content nor link",
               "QkFTRTY0" not in json.dumps(recorded)
               and "cs=" not in json.dumps(recorded))
-        check("flow remembered the sender for next time",
-              flow_store.get(sd_config.STORAGE["sender_email"]) == "remetente@ex.com.br")
+        # Nothing stores a sender any more; it is derived from the token each
+        # time, so it cannot drift from the account actually signed in.
+        check("no sender preference is persisted",
+              "sender_email" not in sd_config.STORAGE)
     finally:
         ui_dialogs.ensure_connected = originals["ensure"]
         ui_dialogs.send_dialog = originals["send_dlg"]

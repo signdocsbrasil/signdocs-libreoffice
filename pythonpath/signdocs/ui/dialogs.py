@@ -434,8 +434,13 @@ def send_dialog(ctx, frame, store, s, state):
                                     config.current_stage(store)))
 
     top = MARGIN + quota_h
+    # Shown, not editable. The server sets `owner` from the verified identity
+    # and ignores anything the client sends, so an editable box here would be
+    # a control that changes nothing — and would invite someone to believe
+    # they had sent "from" another address.
     dialog.label("l0", MARGIN, top + 2, 70, 10, s("sender"))
-    dialog.edit("sender", 80, top, inner - 72, 12, state.get("sender", ""))
+    dialog.label("sender", 80, top + 2, inner - 72, 10,
+                 state.get("sender") or "—")
     dialog.label("hint", MARGIN, top + 14, inner, 10, s("sender_hint"),
                  MultiLine=True)
 
@@ -482,7 +487,6 @@ def send_dialog(ctx, frame, store, s, state):
                   BUTTON_H, s("cancel"), lambda: dialog.finish(None))
 
     def go_review():
-        state["sender"] = dialog.get("sender").strip()
         state["profile"] = PROFILE_KEYS[max(0, dialog.selected_index("profile"))]
         state["order"] = ORDER_KEYS[max(0, dialog.selected_index("order"))]
         if not state["signers"]:
@@ -557,8 +561,6 @@ def review_dialog(ctx, frame, s, state, filename):
                     else s("parallel")),
         "%s: %s" % (s("sender"), state["sender"] or "—"),
     ]
-    if not state["sender"]:
-        lines.append(s("sender_hint"))
 
     height = 96 + 10 * min(len(state["signers"]), 6)
     dialog = Dialog(ctx, s("review_title"), width, height)
@@ -785,7 +787,10 @@ def run_send(ctx, frame, store):
     if not ensure_policies_accepted(ctx, frame, store, s, stage):
         return
     state = {
-        "sender": store.get(config.STORAGE["sender_email"]) or "",
+        # From our own ID token, which is the same identity the server will
+        # attribute the send to. Falls back to the init-session payload if the
+        # token cannot be read.
+        "sender": oauth.account_email(store, stage),
         "profile": store.get(config.STORAGE["profile"]) or "click_only",
         "order": "PARALLEL",
         "signers": [],
@@ -823,7 +828,6 @@ def run_send(ctx, frame, store):
             continue
 
         try:
-            store.set(config.STORAGE["sender_email"], state["sender"])
             store.set(config.STORAGE["profile"], state["profile"])
         except Exception:
             pass
@@ -839,7 +843,7 @@ def run_send(ctx, frame, store):
 
         sent = busy(ctx, parent_window(frame), s("busy_send"), lambda: api.send(
             store, document, state["signers"], profile=state["profile"],
-            order=state["order"], owner_email=state["sender"] or None,
+            order=state["order"],
             idempotency_key=idempotency_key, stage=stage,
         ))
         if not _report(ctx, frame, sent, s):
@@ -1026,9 +1030,11 @@ def run_settings(ctx, frame, store):
                    [s("stage_prod"), s("stage_hml")],
                    stages.index(config.current_stage(store)))
 
+    # Read-only for the same reason as the send window: this is who the server
+    # will attribute sends to, not a preference.
     dialog.label("l1", MARGIN, MARGIN + ROW + 2, 70, 10, s("sender"))
-    dialog.edit("sender", 80, MARGIN + ROW, inner - 72, 12,
-                store.get(config.STORAGE["sender_email"]) or "")
+    dialog.label("sender", 80, MARGIN + ROW + 2, inner - 72, 10,
+                 oauth.account_email(store) or "—")
 
     dialog.label("state", MARGIN, MARGIN + 2 * ROW + 4, inner, 10,
                  s("connected_as") if connected else s("not_connected"))
@@ -1054,10 +1060,6 @@ def run_settings(ctx, frame, store):
 
     def save():
         config.set_stage(store, stages[max(0, dialog.selected_index("stage"))])
-        try:
-            store.set(config.STORAGE["sender_email"], dialog.get("sender").strip())
-        except Exception:
-            pass
         dialog.finish(True)
 
     y = height - BUTTON_H - MARGIN

@@ -341,3 +341,61 @@ def test_stages_hold_independent_sessions(store):
     # Testing against HML must never cost the user their production session.
     assert oauth.is_connected(store, "prod") is True
     assert oauth.is_connected(store, "hml") is False
+
+
+# --------------------------------------------------- account_email
+def _id_token(claims):
+    """A token shaped like Cognito's, signed with nothing — we only decode."""
+    import base64
+    import json
+
+    def seg(obj):
+        raw = json.dumps(obj).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    return "%s.%s.%s" % (seg({"alg": "RS256"}), seg(claims), "sig")
+
+
+def test_account_email_reads_the_claim(monkeypatch):
+    """
+    The address shown as sender must be the one the server will attribute the
+    send to. Anything else is a label that disagrees with the record.
+    """
+    store = JsonStore()
+    monkeypatch.setattr(oauth, "bearer_token",
+                        lambda s, stage=None: _id_token({"email": "a@b.com.br"}))
+    assert oauth.account_email(store) == "a@b.com.br"
+
+
+def test_account_email_survives_padding_lengths(monkeypatch):
+    # base64url in a JWT is unpadded; decoding without re-padding raises on
+    # two of every three payload lengths, which would look intermittent.
+    store = JsonStore()
+    for local in ("a", "ab", "abc", "abcd"):
+        monkeypatch.setattr(oauth, "bearer_token",
+                            lambda s, stage=None, _l=local: _id_token({"email": _l + "@x.com"}))
+        assert oauth.account_email(store) == local + "@x.com"
+
+
+@pytest.mark.parametrize("token", ["", "not-a-jwt", "a.b", "a..c", None])
+def test_a_malformed_token_degrades_to_empty(monkeypatch, token):
+    # Returning "" lets the dialog show a dash. Raising would stop a send over
+    # a cosmetic field the server does not read anyway.
+    store = JsonStore()
+    monkeypatch.setattr(oauth, "bearer_token", lambda s, stage=None: token)
+    assert oauth.account_email(store) == ""
+
+
+def test_no_email_claim_returns_empty(monkeypatch):
+    store = JsonStore()
+    monkeypatch.setattr(oauth, "bearer_token",
+                        lambda s, stage=None: _id_token({"sub": "u1"}))
+    assert oauth.account_email(store) == ""
+
+
+def test_a_failing_token_lookup_does_not_raise(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("no session")
+
+    monkeypatch.setattr(oauth, "bearer_token", boom)
+    assert oauth.account_email(JsonStore()) == ""

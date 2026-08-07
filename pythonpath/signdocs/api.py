@@ -154,7 +154,7 @@ def _document(document):
 
 # ------------------------------------------------------------------ send
 def send(store, document, signers, profile="click_only", order="PARALLEL",
-         owner_email=None, idempotency_key=None, stage=None):
+         idempotency_key=None, stage=None):
     """
     Send the document for signature.
 
@@ -163,10 +163,10 @@ def send(store, document, signers, profile="click_only", order="PARALLEL",
     so a fresh key on every attempt would turn a network blip into a double
     charge.
 
-    `owner_email` is accepted for signature compatibility with the dialog
-    layer but is NOT transmitted — the server sets `owner` from the verified
-    Cognito identity, which is what makes the ownership checks downstream
-    meaningful.
+    There is deliberately no `owner` parameter. The server sets it from the
+    verified Cognito identity and ignores anything sent, which is what makes
+    the ownership checks downstream meaningful — so accepting one here would
+    only invite a caller to think it did something.
 
     Blocking — worker thread only.
     """

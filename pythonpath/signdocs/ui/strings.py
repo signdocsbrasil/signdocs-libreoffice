@@ -32,10 +32,14 @@ _STRINGS = {
 
     # -- fields
     "sender": {"pt": "Remetente", "en": "Sender", "es": "Remitente"},
+    # The old text warned that a blank sender suppressed invites. That stopped
+    # being true when the server began setting `owner` from the verified
+    # identity: the field could not be blank, and nothing the client sent was
+    # used. Say what actually happens instead.
     "sender_hint": {
-        "pt": "Sem o remetente, a API não envia convites por e-mail.",
-        "en": "Without a sender, the API dispatches no invitation e-mails.",
-        "es": "Sin remitente, la API no envía invitaciones por correo.",
+        "pt": "Os envios saem em nome da conta conectada.",
+        "en": "Sends are attributed to the signed-in account.",
+        "es": "Los envíos se atribuyen a la cuenta conectada.",
     },
     "sig_type": {"pt": "Tipo de assinatura", "en": "Signature type",
                  "es": "Tipo de firma"},

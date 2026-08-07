@@ -331,6 +331,33 @@ def bearer_token(store, stage=None):
     return refresh(store, stage)
 
 
+def account_email(store, stage=None):
+    """
+    The e-mail of the signed-in account, from our own ID token.
+
+    This is the only address a send can be attributed to: the add-on tier sets
+    `owner` from the verified identity and ignores anything the client sends,
+    so any other value shown in the UI would be decoration pretending to be a
+    setting.
+
+    Decoded without verifying the signature, on purpose. The server verifies
+    the token on every call; this is only reading back a value we already hold
+    in order to display it. Returns "" rather than raising — a missing claim
+    should degrade the label, not stop a send.
+    """
+    import base64
+    import json
+
+    try:
+        token = bearer_token(store, stage)
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        return claims.get("email") or ""
+    except Exception:
+        return ""
+
+
 def is_connected(store, stage=None):
     stage = stage or config.current_stage(store)
     if _tokens.get(stage):

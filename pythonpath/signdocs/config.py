@@ -65,7 +65,9 @@ STORAGE = {
     # production session.
     "refresh_token": "signdocs.refreshToken.",
     "sends": "signdocs.sends.",
-    "sender_email": "signdocs.senderEmail",
+    # Retired: the sender is the signed-in account, read from the ID token.
+    # The server sets `owner` from the verified identity and ignores the
+    # client, so a stored preference could only ever disagree with reality.
     "profile": "signdocs.profile",
 }
 

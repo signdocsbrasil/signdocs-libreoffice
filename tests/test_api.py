@@ -146,7 +146,7 @@ def test_one_signer_posts_to_the_add_on_tier(store, recorder):
     })
 
     result = api.send(store, DOC, [signer()], profile="click_plus_otp",
-                      owner_email="dono@ex.com.br", idempotency_key="idem-1")
+                      idempotency_key="idem-1")
 
     call = rec.calls[0]
     assert call["method"] == "POST"
@@ -164,7 +164,11 @@ def test_one_signer_posts_to_the_add_on_tier(store, recorder):
     # The server sets owner from the verified identity; sending one would be
     # meaningless and is deliberately not done.
     assert "owner" not in payload
+    # No owner of any shape leaves the client: the server sets it from the
+    # verified identity, and a client-supplied one would be silently ignored
+    # while looking authoritative in the request log.
     assert "owner_email" not in payload
+    assert "owner" not in payload
 
     assert result["kind"] == "session"
     assert result["id"] == "sess-1"
