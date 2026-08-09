@@ -12,6 +12,8 @@ a Brazilian user seeing English because locale detection hiccuped is a worse
 outcome than the reverse.
 """
 
+from signdocs import validators
+
 DEFAULT_LANG = "pt"
 
 _STRINGS = {
@@ -142,6 +144,47 @@ _STRINGS = {
     "invite_not_sent": {"pt": "sem convite — envie o link você mesmo",
                         "en": "no invitation — send the link yourself",
                         "es": "sin invitación — envía el enlace tú mismo"},
+    "sign_now": {"pt": "Assinar agora", "en": "Sign now", "es": "Firmar ahora"},
+    # Marks the reader's own row in the signer list, which is also the row the
+    # Assinar agora button acts on.
+    "signer_you": {"pt": "(você)", "en": "(you)", "es": "(tú)"},
+    # A disabled button with no explanation reads as a broken button. Here the
+    # reason is the feature: you can only ever sign as yourself.
+    "sign_now_other": {
+        "pt": "Você só pode assinar pela sua própria conta. Este signatário "
+              "recebe o link por e-mail.",
+        "en": "You can only sign with your own account. This signer receives "
+              "their link by e-mail.",
+        "es": "Solo puedes firmar con tu propia cuenta. Este firmante recibe "
+              "su enlace por correo.",
+    },
+    # Said plainly, because "why can't I copy this?" is the obvious question and
+    # the honest answer is reassuring rather than embarrassing.
+    "copy_click_only_blocked": {
+        "pt": "Neste tipo de assinatura, o link sozinho já permite assinar — "
+              "por isso ele vai direto para o e-mail do signatário e não pode "
+              "ser copiado aqui.",
+        "en": "With this signature type the link alone is enough to sign, so "
+              "it goes straight to the signer's e-mail and cannot be copied "
+              "here.",
+        "es": "Con este tipo de firma el enlace por sí solo basta para firmar, "
+              "por eso va directo al correo del firmante y no se puede copiar "
+              "aquí.",
+    },
+    # Shown in the list in place of a link that was never sent to us.
+    "link_by_email": {"pt": "link enviado por e-mail",
+                      "en": "link sent by e-mail",
+                      "es": "enlace enviado por correo"},
+    # The link is minted on demand and never stored, so it can fail to come
+    # back — say why rather than opening a blank browser tab.
+    "sign_now_unavailable": {
+        "pt": "Não foi possível abrir a assinatura. Ela pode já ter sido "
+              "concluída ou cancelada.",
+        "en": "Could not open the signature. It may already be completed or "
+              "cancelled.",
+        "es": "No se pudo abrir la firma. Puede que ya esté completada o "
+              "cancelada.",
+    },
     "saved_to": {"pt": "Documento assinado salvo em:",
                  "en": "Signed document saved to:",
                  "es": "Documento firmado guardado en:"},
@@ -400,6 +443,46 @@ def api_status(s, raw):
         return ""
     key = API_STATUS.get(str(raw).strip().upper())
     return s(key) if key else str(raw)
+
+
+def signer_line(s, signer, is_you=False):
+    """
+    One signer as a row in the tracking list.
+
+    "Signatários: 0/1" says how many are outstanding but never which, which is
+    the thing worth knowing on a multi-signer envelope — a count cannot tell
+    you who to chase.
+
+    Name, e-mail and CPF/CNPJ together, because on their own none of them
+    identifies a signer reliably: two people share a name, one person has
+    several addresses, and the fiscal number is the field most worth
+    double-checking before a document is signed — it is the one a typo makes
+    legally wrong rather than merely undeliverable.
+
+    Every part is optional and simply left out when absent, so a row is never
+    padded with empty separators. Whether the row is the reader's own is
+    decided by the caller: identity comparison belongs with
+    `oauth.matches_account`, not duplicated here.
+    """
+    who = (signer.get("name") or "").strip() or (signer.get("email") or "").strip()
+    if not who:
+        who = "—"
+    if is_you:
+        who = "%s %s" % (who, s("signer_you"))
+
+    parts = [who]
+    email = (signer.get("email") or "").strip()
+    # Not repeated when it already stands in for a missing name.
+    if email and email != who.split(" ")[0]:
+        parts.append(email)
+    fiscal = (signer.get("fiscal") or "").strip()
+    if fiscal:
+        parts.append(validators.format_cpf_cnpj(fiscal) or fiscal)
+
+    state = api_status(s, signer.get("status"))
+    if state:
+        parts.append(state)
+    return " — ".join(parts)
 
 
 def _as_int(value):

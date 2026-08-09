@@ -79,7 +79,18 @@ class History(object):
             "transactionId": entry.get("transactionId"),
             "filename": entry.get("filename"),
             "signers": [
-                {"name": s.get("name"), "email": s.get("email")}
+                # Name, e-mail and CPF/CNPJ: what the user typed themselves,
+                # about their own document, kept so the tracking list can say
+                # WHO is outstanding rather than only how many. The status
+                # payloads carry no fiscal number, so this is the only source.
+                #
+                # Personal data, and treated as such — the store writes 0600
+                # from the start (store.FILE_MODE) — but not a credential. That
+                # distinction is the line this whitelist draws: a CPF
+                # identifies a signer, whereas a signing link IS the signature,
+                # and only one of those may be written to disk.
+                {"name": s.get("name"), "email": s.get("email"),
+                 "fiscal": s.get("fiscal")}
                 for s in (entry.get("signers") or [])
             ],
             "createdAt": entry.get("createdAt"),

@@ -366,3 +366,46 @@ def test_the_remaining_profiles_still_map(store, recorder, key, wire):
     rec = recorder({"sessionId": "s", "url": "u", "clientSecret": "c"})
     api.send(store, DOC, [signer()], profile=key)
     assert rec.calls[0]["payload"]["policy"]["profile"] == wire
+
+
+# ------------------------------------------------- per-signer status rows
+#
+# "Signatários: 1/3" says a document is stuck without saying who on. The
+# add-on tier already passes the envelope's `sessions` through whole, so the
+# names were arriving and being discarded.
+
+def test_envelope_status_lists_each_signer(store, recorder):
+    recorder({
+        "status": "PENDING", "completedSessions": 1, "totalSigners": 2,
+        "sessions": [
+            {"sessionId": "ss-2", "signerName": "Bruno",
+             "signerEmail": "bruno@ex.com", "status": "ACTIVE", "signerIndex": 2},
+            {"sessionId": "ss-1", "signerName": "Ana",
+             "signerEmail": "ana@ex.com", "status": "COMPLETED", "signerIndex": 1},
+        ],
+    })
+    signers = api.status_of(store, "envelope", "env-1")["signers"]
+
+    # Sorted by signing order: on a SEQUENTIAL envelope the order says who is
+    # being waited on, so returning them as they arrived would mislead.
+    assert [row["name"] for row in signers] == ["Ana", "Bruno"]
+    assert [row["status"] for row in signers] == ["COMPLETED", "ACTIVE"]
+    assert signers[0]["email"] == "ana@ex.com"
+
+
+def test_envelope_status_without_sessions_yields_no_rows(store, recorder):
+    # An envelope that has aged out of the API still has to render.
+    recorder({"status": "PENDING", "completedSessions": 0, "totalSigners": 2})
+    assert api.status_of(store, "envelope", "env-1")["signers"] == []
+
+
+def test_session_status_yields_one_row_carrying_the_session_state(store, recorder):
+    recorder({"status": "ACTIVE", "transactionId": "tx-7",
+              "signerEmail": "ana@ex.com"})
+    signers = api.status_of(store, "session", "sess-1")["signers"]
+
+    assert len(signers) == 1
+    # No name on this payload — the tracker fills it from what it recorded at
+    # send time, so None here is expected rather than a gap.
+    assert signers[0] == {"name": None, "email": "ana@ex.com",
+                          "status": "ACTIVE", "index": 1}

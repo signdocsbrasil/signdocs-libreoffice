@@ -73,6 +73,35 @@ def signed_in_email(token):
         return None
 
 
+def _link_for(sent, email):
+    """The entry in a send's link list belonging to one signer."""
+    for link in sent.get("links") or []:
+        if (link.get("signerEmail") or "").lower() == email.lower():
+            return link
+    return None
+
+
+def _fetchable(url):
+    """
+    Whether a minted signing link really loads.
+
+    "Well-formed" and "works" are different claims, and only the second one
+    matters to somebody trying to sign. No Authorization header: the secret
+    rides in the query string and the signing page is not behind bearer auth.
+    """
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status == 200
+    except urllib.error.HTTPError as exc:
+        return exc.code == 200
+    except Exception:
+        return False
+
+
 def make_pdf():
     """A genuinely valid PDF, produced by LibreOffice itself."""
     tmpdir = tempfile.mkdtemp(prefix="signdocs-e2e-")
@@ -105,7 +134,10 @@ def main():
         oauth._tokens[STAGE] = (preset, 1 << 40)
         check("using SIGNDOCS_ID_TOKEN from the environment", True)
     else:
-        print("  opening your browser at %s ..." % config.COGNITO["domain"])
+        # config.STAGES[stage]["login"], not a COGNITO constant: there is one
+        # managed-login host per stage, and signing in against the wrong pool
+        # is the failure this print exists to make visible.
+        print("  opening your browser at %s ..." % config.STAGES[STAGE]["login"])
         token = oauth.connect(store, STAGE, timeout=300)
         check("signed in", bool(token))
         print("     reuse with: export SIGNDOCS_ID_TOKEN=%s..." % token[:24])
@@ -161,8 +193,100 @@ def main():
     created.append(("envelope", env["id"]))
     check("envelope created", bool(env["id"]), env["id"])
     check("one link per signer", len(env["links"]) == 2)
+    # Counting links is not the same as having working ones. The envelope path
+    # returned bare URLs — no `?cs=` — for a long time, and it stayed invisible
+    # because invited signers get a correctly-assembled link by e-mail instead.
+    # Only the sender ever saw it, and only when they were also a signer.
+    for entry in env["links"]:
+        if entry.get("url"):
+            check("envelope link carries its client secret",
+                  "?cs=ss_secret_" in entry["url"],
+                  entry["url"][:70])
     env_status = api.status_of(store, "envelope", env["id"], stage=STAGE)
     check("envelope reports 2 signers", env_status["total"] == 2, env_status["total"])
+
+    section("sign it yourself")
+    # The link is never stored — not in the profile, not in the history — so
+    # "take me back to my document" has to mint a new one. This is the whole
+    # mechanism behind the Assinar agora button surviving a closed window.
+    url = api.sign_link(store, "session", sent["id"], stage=STAGE)
+    check("a link was minted for my own session", bool(url), (url or "")[:70])
+    check("the minted link carries a client secret",
+          "cs=ss_secret_" in (url or ""))
+    if url:
+        check("the minted link actually loads", _fetchable(url), url[:70])
+    # Minted, not looked up: a second call must work and must differ.
+    again = api.sign_link(store, "session", sent["id"], stage=STAGE)
+    check("a second call mints another working link",
+          bool(again) and again != url)
+    # Owning a send does not entitle you to sign it. Neither signer on the
+    # two-signer envelope is me, so there is no link here to give.
+    check("refused for an envelope I am not a signer in",
+          api.sign_link(store, "envelope", env["id"], stage=STAGE) is None)
+
+    section("click-only links are withheld from the sender")
+    # A CLICK_ONLY link is the entire authentication, so handing the sender
+    # somebody else's would let them sign in that person's name. Mixed
+    # deliberately: my own link must still come back.
+    other = "e2e-terceiro@example.invalid"
+    mixed = api.send(
+        store, document,
+        [{"name": "Eu", "email": me, "fiscal": CPF_A},
+         {"name": "Terceiro", "email": other, "fiscal": CPF_B}],
+        profile="click_only", order="PARALLEL", stage=STAGE)
+    created.append(("envelope", mixed["id"]))
+    mine = _link_for(mixed, me)
+    theirs = _link_for(mixed, other)
+    check("my own click-only link is returned", bool(mine and mine.get("url")))
+    if mine and mine.get("url"):
+        # The sender's own envelope link is exactly the one nobody e-mails, so
+        # it has to be verified by loading it rather than by inspection.
+        check("the sender's own envelope link actually loads",
+              _fetchable(mine["url"]), mine["url"][:70])
+    check("another signer's click-only link is WITHHELD",
+          bool(theirs) and not theirs.get("url"),
+          (theirs or {}).get("url") or "absent")
+    # Withholding is only acceptable because the invitation still goes out.
+    check("an invitation was dispatched to them instead",
+          bool(theirs and theirs.get("inviteSent")))
+    check("envelope self-sign-link returns my own session",
+          bool(api.sign_link(store, "envelope", mixed["id"], stage=STAGE)))
+
+    section("a second factor means the link may be shared")
+    # The rule has to be this narrow: with an OTP going to the signer's own
+    # mailbox, holding the link is not enough to sign.
+    otp = api.send(
+        store, document,
+        [{"name": "Eu", "email": me, "fiscal": CPF_A},
+         {"name": "Terceiro", "email": other, "fiscal": CPF_B}],
+        profile="click_plus_otp", order="PARALLEL", stage=STAGE)
+    created.append(("envelope", otp["id"]))
+    otp_theirs = _link_for(otp, other)
+    check("another signer's click+OTP link is returned",
+          bool(otp_theirs and otp_theirs.get("url")),
+          (otp_theirs or {}).get("url", "")[:60] or "absent")
+
+    section("resend still delivers")
+    # Refactored onto the shared mint, and now the ONLY way a withheld
+    # click-only signer can be reached — so a regression here would strand
+    # them completely. Unit tests pin the guards; this proves the live route
+    # still answers and still throttles.
+    #
+    # Run against the single-signer session, whose signer is the signed-in
+    # account: a real invitation lands in YOUR OWN inbox, so delivery can be
+    # confirmed by eye without mailing anybody else. Click the button in it —
+    # that is the same link an invited signer receives.
+    try:
+        api._call(store, "POST", "/resend-invite/" + sent["id"], {}, STAGE)
+        check("resend-invite accepted", True, "check your inbox for %s" % me)
+    except HttpError as exc:
+        check("resend-invite accepted", False, "%s %s" % (exc.status, exc.message))
+    # One per 60 s per session, so an immediate repeat must be refused.
+    try:
+        api._call(store, "POST", "/resend-invite/" + sent["id"], {}, STAGE)
+        check("the 60s resend throttle still bites", False, "accepted twice")
+    except HttpError as exc:
+        check("the 60s resend throttle still bites", exc.status == 409, exc.status)
 
     section("forced signing mode")
     forced = api.send(

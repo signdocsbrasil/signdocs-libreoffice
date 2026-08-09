@@ -135,3 +135,74 @@ def test_every_wire_status_is_translated_in_every_language(lang):
     s = strings.Strings(lang)
     for raw in strings.API_STATUS:
         assert strings.api_status(s, raw) not in ("", raw)
+
+
+# ------------------------------------------------------------ signer_line
+def test_signer_line_shows_name_and_translated_state():
+    s = strings.Strings("pt")
+    line = strings.signer_line(s, {"name": "Ana", "email": "ana@ex.com",
+                                   "status": "COMPLETED"})
+    assert line.startswith("Ana — ")
+    # Translated, never the raw wire value.
+    assert "COMPLETED" not in line
+
+
+def test_signer_line_falls_back_to_the_email_when_unnamed():
+    s = strings.Strings("pt")
+    line = strings.signer_line(s, {"name": "", "email": "ana@ex.com",
+                                   "status": "ACTIVE"})
+    assert line.startswith("ana@ex.com — ")
+
+
+def test_signer_line_never_renders_a_blank_row():
+    # A row with neither name nor e-mail would otherwise look like a bug.
+    s = strings.Strings("pt")
+    assert strings.signer_line(s, {}).strip() == "—"
+
+
+def test_signer_line_marks_your_own_row():
+    s = strings.Strings("pt")
+    mine = strings.signer_line(s, {"name": "Ana", "status": "ACTIVE"},
+                               is_you=True)
+    theirs = strings.signer_line(s, {"name": "Ana", "status": "ACTIVE"})
+    assert s("signer_you") in mine
+    assert s("signer_you") not in theirs
+
+
+def test_signer_line_omits_the_dash_when_there_is_no_status():
+    s = strings.Strings("pt")
+    assert strings.signer_line(s, {"name": "Ana"}) == "Ana"
+
+
+def test_signer_line_shows_email_and_fiscal():
+    # Name alone does not identify a signer: two people share one, and the
+    # fiscal number is the field a typo makes legally wrong rather than merely
+    # undeliverable.
+    s = strings.Strings("pt")
+    line = strings.signer_line(s, {
+        "name": "Ana", "email": "ana@ex.com", "fiscal": "52998224725",
+        "status": "ACTIVE",
+    })
+    assert "Ana" in line
+    assert "ana@ex.com" in line
+    # Punctuated for reading, not echoed as raw digits.
+    assert "529.982.247-25" in line
+
+
+def test_signer_line_punctuates_a_cnpj_too():
+    s = strings.Strings("pt")
+    line = strings.signer_line(s, {"name": "WE", "fiscal": "11222333000181"})
+    assert "11.222.333/0001-81" in line
+
+
+def test_signer_line_omits_parts_that_are_missing():
+    # No empty separators when a signer has only some of the fields.
+    s = strings.Strings("pt")
+    assert strings.signer_line(s, {"name": "Ana"}) == "Ana"
+    assert "—" not in strings.signer_line(s, {"name": "Ana"})
+
+
+def test_signer_line_does_not_repeat_the_email_standing_in_for_a_name():
+    s = strings.Strings("pt")
+    line = strings.signer_line(s, {"email": "ana@ex.com", "status": "ACTIVE"})
+    assert line.count("ana@ex.com") == 1

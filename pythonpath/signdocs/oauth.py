@@ -358,6 +358,31 @@ def account_email(store, stage=None):
         return ""
 
 
+def matches_account(signer_email, account_email):
+    """
+    True when a signer is the signed-in account.
+
+    Used to decide whether to offer someone their own signing link. Getting it
+    wrong in the permissive direction means offering to open somebody else's
+    signing session, and whoever opens a signing link can complete the
+    signature — so an unknown identity is never a match. `account_email`
+    returns "" on any failure by design, which makes the empty case ordinary
+    rather than theoretical.
+
+    The server enforces this too, and independently. This only avoids putting a
+    button in front of someone that would be refused.
+    """
+    if not signer_email or not account_email:
+        return False
+    signer = signer_email.strip().lower()
+    account = account_email.strip().lower()
+    # Compared after stripping, so two blank-but-not-empty values cannot match
+    # each other into a false positive.
+    if not signer or not account:
+        return False
+    return signer == account
+
+
 def is_connected(store, stage=None):
     stage = stage or config.current_stage(store)
     if _tokens.get(stage):

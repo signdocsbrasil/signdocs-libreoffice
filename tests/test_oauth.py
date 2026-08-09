@@ -399,3 +399,49 @@ def test_a_failing_token_lookup_does_not_raise(monkeypatch):
 
     monkeypatch.setattr(oauth, "bearer_token", boom)
     assert oauth.account_email(JsonStore()) == ""
+
+
+# ------------------------------------------------------- matches_account
+#
+# The predicate that decides whether to offer somebody their own signing link.
+# Wrong in the permissive direction, it offers to open another person's signing
+# session — and whoever opens one can complete the signature.
+
+@pytest.mark.parametrize("signer,account", [
+    ("a@b.com", "a@b.com"),
+    ("A@B.com", "a@b.com"),
+    ("a@b.com", "A@B.COM"),
+    (" a@b.com ", "a@b.com"),
+    ("a@b.com", "\ta@b.com\n"),
+])
+def test_matches_account_accepts_the_same_address(signer, account):
+    assert oauth.matches_account(signer, account) is True
+
+
+@pytest.mark.parametrize("signer,account", [
+    ("a@b.com", "c@d.com"),
+    ("ana@b.com", "an@b.com"),
+    ("a@b.com", "a@b.co"),
+])
+def test_matches_account_rejects_a_different_address(signer, account):
+    assert oauth.matches_account(signer, account) is False
+
+
+@pytest.mark.parametrize("signer,account", [
+    ("", "a@b.com"),
+    ("a@b.com", ""),
+    ("", ""),
+    (None, "a@b.com"),
+    ("a@b.com", None),
+    (None, None),
+    ("   ", "a@b.com"),
+    ("a@b.com", "   "),
+    # Two blanks must not match each other: stripping makes them equal, and
+    # equality is not identity.
+    ("   ", "\t"),
+])
+def test_matches_account_treats_an_unknown_identity_as_no_match(signer, account):
+    # account_email returns "" on any failure, so this is the ordinary case
+    # rather than a theoretical one: an unreadable token must disable the
+    # button, never enable it.
+    assert oauth.matches_account(signer, account) is False

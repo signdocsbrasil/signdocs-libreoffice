@@ -243,14 +243,25 @@ def main():
 
     built_models = {}
 
+    # Whether each control was built enabled. A gate that is only asserted to
+    # *exist* passes just as happily on a build where it never disables, which
+    # is the failure that matters.
+    built_enabled = {}
+
     def fake_show(self, parent=None):
         title = self.model.Title
         built[title] = list(self.model.getElementNames())
         for name in self.model.getElementNames():
+            control = None
             try:
-                built_models[(title, name)] = self.model.getByName(name).ImplementationName
+                control = self.model.getByName(name)
+                built_models[(title, name)] = control.ImplementationName
             except Exception:
                 built_models[(title, name)] = ""
+            try:
+                built_enabled[(title, name)] = bool(control.Enabled)
+            except Exception:
+                built_enabled[(title, name)] = None
         return None
 
     widgets.Dialog.show = fake_show
@@ -334,6 +345,73 @@ def main():
         check("result dialog builds",
               "links" in built.get(s("result_title"), []))
 
+        # -- "Assinar agora" and the two gates around it -------------------
+        #
+        # A signing link is a bearer credential: whoever opens one can complete
+        # that signature. So the button opens the signed-in account's own row
+        # and no other, and a CLICK_ONLY link belonging to somebody else is not
+        # copiable — for that profile the link IS the whole authentication.
+        # Both are enforced server-side too; these assertions are about not
+        # putting the affordance in front of anyone in the first place.
+        ME = "eu@example.invalid"
+        OTHER = "outro@example.invalid"
+
+        def result_state(sent, account, control):
+            ui_dialogs.result_dialog(ctx, None, s, sent, account)
+            return built_enabled.get((s("result_title"), control))
+
+        mine_first = {
+            "kind": "envelope", "id": "env_x", "profile": "click_only",
+            "links": [
+                {"signerName": "Eu", "signerEmail": ME,
+                 "url": "https://s/mine?cs=y", "inviteSent": False},
+                {"signerName": "Outro", "signerEmail": OTHER,
+                 "url": None, "inviteSent": True},
+            ],
+        }
+        check("result dialog offers Assinar agora",
+              "sign" in built.get(s("result_title"), []))
+        # Row 0 is preselected, so this is the account's own row.
+        check("sign is enabled on the account's own row",
+              result_state(mine_first, ME, "sign") is True)
+        check("copy is enabled on the account's own row",
+              result_state(mine_first, ME, "copy") is True)
+
+        others_first = {
+            "kind": "envelope", "id": "env_y", "profile": "click_only",
+            "links": [
+                {"signerName": "Outro", "signerEmail": OTHER,
+                 "url": None, "inviteSent": True},
+                {"signerName": "Eu", "signerEmail": ME,
+                 "url": "https://s/mine?cs=y", "inviteSent": False},
+            ],
+        }
+        check("sign is DISABLED on another signer's row",
+              result_state(others_first, ME, "sign") is False)
+        check("copy is DISABLED on another signer's CLICK_ONLY row",
+              result_state(others_first, ME, "copy") is False)
+
+        # The narrowness of the rule is the point: with a second factor in
+        # play, another signer's link is safe to hand over.
+        otp_others_first = {
+            "kind": "envelope", "id": "env_z", "profile": "click_plus_otp",
+            "links": [
+                {"signerName": "Outro", "signerEmail": OTHER,
+                 "url": "https://s/other?cs=y", "inviteSent": True},
+                {"signerName": "Eu", "signerEmail": ME,
+                 "url": "https://s/mine?cs=y", "inviteSent": False},
+            ],
+        }
+        check("copy stays enabled on another signer's CLICK_PLUS_OTP row",
+              result_state(otp_others_first, ME, "copy") is True)
+        check("sign stays disabled on another signer's CLICK_PLUS_OTP row",
+              result_state(otp_others_first, ME, "sign") is False)
+
+        # An unreadable ID token yields "", which must disable rather than
+        # match — the failure mode of account_email is silence, not an error.
+        check("sign is disabled when the account is unknown",
+              result_state(mine_first, "", "sign") is False)
+
         ui_dialogs.run_settings(ctx, None, store)
         check("settings dialog builds",
               "stage" in built.get(s("settings_title"), []))
@@ -348,17 +426,46 @@ def main():
 
         def counting_status(store_, kind, ident, stage=None):
             polls.append(ident)
-            return {"status": "ACTIVE", "completed": 0, "total": 2,
-                    "signed_available": False, "transactionId": None, "raw": {}}
+            return {"status": "ACTIVE", "completed": 1, "total": 2,
+                    "signed_available": False, "transactionId": None,
+                    "signers": [
+                        {"name": "Ana", "email": "ana@ex.com",
+                         "status": "COMPLETED", "index": 1},
+                        {"name": None, "email": "eu@ex.com",
+                         "status": "ACTIVE", "index": 2},
+                    ],
+                    "raw": {}}
 
         probe_api.status_of = counting_status
         try:
             before = threading.active_count()
             ui_dialogs.track_dialog(ctx, None, JsonStore(), s,
                                     {"id": "env-x", "kind": "envelope",
-                                     "filename": "contrato.pdf"})
+                                     "filename": "contrato.pdf",
+                                     "signers": [
+                                         {"name": "Ana", "email": "ana@ex.com",
+                                          "fiscal": "52998224725"},
+                                         {"name": "Eu", "email": "eu@ex.com",
+                                          "fiscal": "11222333000181"}]},
+                                    account_email="eu@ex.com")
             check("track dialog builds",
                   "download" in built.get(s("track_title"), []))
+            # "Signatários: 1/2" says a document is stuck without saying who
+            # on, which is the thing worth knowing on a multi-signer envelope.
+            check("track dialog lists the signers",
+                  "signers" in built.get(s("track_title"), []))
+            # A name missing from the status payload is filled from what was
+            # recorded at send time, rather than leaving a bare e-mail.
+            line = ui_strings.signer_line(
+                s, {"name": "Eu", "email": "eu@ex.com",
+                    "fiscal": "52998224725", "status": "ACTIVE"},
+                is_you=True)
+            check("a signer row carries name, e-mail, CPF and state",
+                  "Eu" in line and s("signer_you") in line
+                  and "eu@ex.com" in line
+                  # Punctuated, never raw digits.
+                  and "529.982.247-25" in line
+                  and ui_strings.api_status(s, "ACTIVE") in line, line)
             # The status label must be translated, while cancel-enablement
             # still keys off the raw wire value. Rendering ACTIVE verbatim is
             # what a user reports; matching a translated string is what would

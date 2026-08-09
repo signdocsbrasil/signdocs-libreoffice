@@ -193,7 +193,7 @@ def consent_dialog(ctx, frame, s, status):
             dialog.button(
                 "open%d" % index, width - BUTTON_W - MARGIN, y, BUTTON_W,
                 BUTTON_H - 2, s("consent_open"),
-                lambda u=url: _open_policy(ctx, u))
+                lambda u=url: _open_in_browser(ctx, u))
         y += 16
 
     y = height - BUTTON_H - MARGIN
@@ -204,13 +204,16 @@ def consent_dialog(ctx, frame, s, status):
     return bool(dialog.show(parent_window(frame)))
 
 
-def _open_policy(ctx, url):
+def _open_in_browser(ctx, url):
     """
-    Show a policy in the browser, or put it on the clipboard if there is none.
+    Open a URL in the browser, or put it on the clipboard if there is none.
 
     webbrowser.open returns False rather than raising on a desktop with no
-    browser configured, and silently failing here would leave the user asked
-    to accept something they were given no way to read.
+    browser configured, and silently failing would leave the user asked to
+    accept a policy they were given no way to read — or, for a signing link,
+    stranded on a document they were told they could sign.
+
+    Returns True when the browser actually opened.
     """
     opened = False
     try:
@@ -220,6 +223,7 @@ def _open_policy(ctx, url):
         opened = False
     if not opened:
         copy_to_clipboard(ctx, url)
+    return opened
 
 
 def ensure_policies_accepted(ctx, frame, store, s, stage):
@@ -581,39 +585,119 @@ def review_dialog(ctx, frame, s, state, filename):
 
 
 # ----------------------------------------------------------- result dialog
-def result_dialog(ctx, frame, s, sent):
+def result_dialog(ctx, frame, s, sent, account_email=""):
+    """
+    Show what was created, and let the sender sign their own part right away.
+
+    The sender is very often one of the signers, and that case gets no
+    invitation e-mail — the API suppresses it when the owner is the signer,
+    correctly, since nobody wants to be mailed a link to their own document.
+    Without a button here, signing your own document meant selecting a
+    200-character URL out of a list box and pasting it into a browser.
+
+    Two rules shape the buttons, and both are about the same fact: a signing
+    link is a bearer credential, so whoever holds it can sign.
+
+      * **Assinar agora** opens only the row belonging to the signed-in
+        account. Never any other row, and never on its own — an explicit
+        click, never a redirect. An earlier version of this in another product
+        auto-opened whatever link it had, and an admin signed a document in
+        somebody else's name.
+      * **Copiar** is unavailable for another signer's CLICK_ONLY row, because
+        for that profile the link is the entire authentication. The server does
+        not even send it; the row says so instead of showing a link that is not
+        there.
+
+    Both are enforced server-side as well. These only avoid offering something
+    that would be refused.
+    """
     width = 320
     height = 150
     dialog = Dialog(ctx, s("result_title"), width, height)
     inner = width - 2 * MARGIN
 
+    links = sent["links"]
+    profile = sent.get("profile")
+
     entries = []
-    for link in sent["links"]:
+    for link in links:
         note = s("invite_sent") if link.get("inviteSent") else s("invite_not_sent")
+        # A withheld link has no url at all. Saying so beats an em dash that
+        # reads like something went wrong.
+        target = link.get("url") or s("link_by_email")
         entries.append("%s — %s (%s)" % (link.get("signerName") or "",
-                                         link.get("url") or "—", note))
+                                         target, note))
 
     dialog.label("t", MARGIN, MARGIN, inner, 10, s("sent_ok"))
-    dialog.listctl("links", MARGIN, MARGIN + 12, inner, height - 60, entries)
+    control = dialog.listctl("links", MARGIN, MARGIN + 12, inner,
+                             height - 60, entries)
+    # Preselect, so the single-signer case — much the commonest — needs no
+    # click before the buttons mean anything.
+    if entries:
+        control.SelectedItems = (0,)
+
+    def selected_link():
+        index = dialog.selected_index("links")
+        if index < 0 or index >= len(links):
+            return None
+        return links[index]
+
+    def is_mine(link):
+        return bool(link) and oauth.matches_account(
+            link.get("signerEmail"), account_email)
 
     def copy_selected():
-        index = dialog.selected_index("links")
-        if index < 0 or index >= len(sent["links"]):
+        link = selected_link()
+        if link is None:
             return
-        url = sent["links"][index].get("url")
-        if url and copy_to_clipboard(ctx, url):
+        url = link.get("url")
+        if not url:
+            # Withheld, not missing. Explain which, so the answer to "why can't
+            # I copy this?" is the honest one.
+            if (profile or "") == "click_only" and not is_mine(link):
+                msgbox.info(ctx, frame, s("copy_click_only_blocked"), s("app"))
+            return
+        if copy_to_clipboard(ctx, url):
             msgbox.info(ctx, frame, s("copied"), s("app"))
-        elif url:
+        else:
             # No clipboard on this session; show the link so it can be
             # selected by hand rather than claiming a copy that did not happen.
             msgbox.info(ctx, frame, url, s("app"))
 
+    def sign_selected():
+        link = selected_link()
+        if not is_mine(link):
+            msgbox.info(ctx, frame, s("sign_now_other"), s("app"))
+            return
+        url = link.get("url")
+        if not url:
+            msgbox.info(ctx, frame, s("sign_now_unavailable"), s("app"))
+            return
+        _open_in_browser(ctx, url)
+
+    def refresh_buttons():
+        link = selected_link()
+        mine = is_mine(link)
+        dialog.enable("sign", mine)
+        # Your own row always copies; another signer's only when the link was
+        # actually returned.
+        dialog.enable("copy", bool(link) and (mine or bool(link.get("url"))))
+
     y = height - BUTTON_H - MARGIN
-    dialog.button("copy", MARGIN, y, BUTTON_W, BUTTON_H, s("copy"), copy_selected)
-    dialog.button("track", MARGIN + BUTTON_W + 4, y, BUTTON_W + 8, BUTTON_H,
-                  s("track_title"), lambda: dialog.finish("track"))
+    # "Assinar agora" is longer than any existing caption, hence the wider
+    # button; the four still fit inside 320 without crowding Fechar.
+    dialog.button("sign", MARGIN, y, BUTTON_W + 24, BUTTON_H, s("sign_now"),
+                  sign_selected)
+    dialog.button("copy", MARGIN + BUTTON_W + 28, y, BUTTON_W, BUTTON_H,
+                  s("copy"), copy_selected)
+    dialog.button("track", MARGIN + 2 * BUTTON_W + 32, y, BUTTON_W + 8,
+                  BUTTON_H, s("track_title"), lambda: dialog.finish("track"))
     dialog.button("close", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
                   s("close"), lambda: dialog.finish(True))
+
+    dialog.on_change("links", refresh_buttons)
+    refresh_buttons()
+
     return dialog.show(parent_window(frame))
 
 
@@ -642,7 +726,8 @@ def _unique_path(path):
     return path
 
 
-def track_dialog(ctx, frame, store, s, entry, document_model=None):
+def track_dialog(ctx, frame, store, s, entry, document_model=None,
+                 account_email=None):
     """
     Follow a send to completion and bring the signed PDF back.
 
@@ -651,19 +736,44 @@ def track_dialog(ctx, frame, store, s, entry, document_model=None):
     finished envelope would be rude to the API and pointless. The poller is
     also stopped when the dialog closes, so closing the window really does end
     the work.
+
+    This is also where somebody sits waiting on a document they themselves have
+    to sign, so it offers the same **Assinar agora** as the pending list. The
+    link is minted on demand; nothing is stored.
     """
     stage = config.current_stage(store)
-    width = 300
-    height = 120
+    if account_email is None:
+        account_email = oauth.account_email(store, stage)
+    # 380 rather than 300: five buttons now, one of them wide. Taller too,
+    # for the signer list.
+    width = 380
+    height = 210
     dialog = Dialog(ctx, s("track_title"), width, height)
     inner = width - 2 * MARGIN
     stop = threading.Event()
     latest = {}
 
+    # What was typed at send time, keyed by e-mail. The status payloads carry
+    # no fiscal number at all and the session one carries no name either, so
+    # the local record is the only source for both — the API is authoritative
+    # about who has signed, never about who they are.
+    known = {}
+    for signer in entry.get("signers") or []:
+        email = (signer.get("email") or "").strip().lower()
+        if email:
+            known[email] = signer
+
     dialog.label("doc", MARGIN, MARGIN, inner, 10,
                  "%s: %s" % (s("document"), entry.get("filename") or ""))
     dialog.label("status", MARGIN, MARGIN + 14, inner, 10, s("busy_status"))
     dialog.label("progress", MARGIN, MARGIN + 28, inner, 10, "")
+    # Drawn from the local record straight away, so the list is populated
+    # before the first poll returns rather than sitting empty for a beat.
+    dialog.listctl("signers", MARGIN, MARGIN + 42, inner, height - 110,
+                   [strings.signer_line(
+                       s, signer,
+                       oauth.matches_account(signer.get("email"), account_email))
+                    for signer in (entry.get("signers") or [])])
 
     def render(status):
         """Main thread only — called through on_main_thread by the poller."""
@@ -674,8 +784,22 @@ def track_dialog(ctx, frame, store, s, entry, document_model=None):
             if total:
                 dialog.model.getByName("progress").Label = "%s: %d/%d" % (
                     s("signers"), status.get("completed") or 0, total)
+            # Who, not just how many. A count says a document is stuck; the
+            # list says who it is stuck on.
+            rows = status.get("signers") or []
+            if rows:
+                dialog.set_items("signers", [
+                    strings.signer_line(
+                        s, _merge_signer(row, known),
+                        oauth.matches_account(row.get("email"), account_email))
+                    for row in rows
+                ])
             dialog.enable("download", bool(status.get("signed_available")))
             dialog.enable("cancel_send", status.get("status") == "ACTIVE")
+            # Only while there is still something to sign, and only if it is
+            # the account's own signature that is outstanding.
+            dialog.enable("sign", status.get("status") == "ACTIVE"
+                          and _entry_is_mine(entry, account_email))
         except Exception:
             # The dialog was disposed between the poll and the callback.
             pass
@@ -740,21 +864,38 @@ def track_dialog(ctx, frame, store, s, entry, document_model=None):
                         s("app"))
         dialog.finish(True)
 
+    def sign_now():
+        result = busy(ctx, parent_window(frame), s("busy_status"),
+                      lambda: api.sign_link(store, entry["kind"], entry["id"],
+                                            stage=stage))
+        if not _report(ctx, frame, result, s):
+            return
+        if not result.value:
+            msgbox.info(ctx, frame, s("sign_now_unavailable"), s("app"))
+            return
+        _open_in_browser(ctx, result.value)
+
     y = height - BUTTON_H - MARGIN
-    dialog.button("refresh", MARGIN, y, BUTTON_W, BUTTON_H, s("refresh"),
+    dialog.button("sign", MARGIN, y, BUTTON_W + 24, BUTTON_H, s("sign_now"),
+                  sign_now)
+    dialog.button("refresh", MARGIN + BUTTON_W + 28, y, BUTTON_W, BUTTON_H,
+                  s("refresh"),
                   lambda: async_work.run(
                       ctx,
                       lambda: api.status_of(store, entry["kind"], entry["id"],
                                             stage=stage),
                       lambda r: render(r.value) if r.ok else None))
-    dialog.button("download", MARGIN + BUTTON_W + 4, y, BUTTON_W + 12, BUTTON_H,
-                  s("download"), download)
-    dialog.button("cancel_send", MARGIN + 2 * BUTTON_W + 20, y, BUTTON_W + 12,
+    dialog.button("download", MARGIN + 2 * BUTTON_W + 32, y, BUTTON_W + 12,
+                  BUTTON_H, s("download"), download)
+    dialog.button("cancel_send", MARGIN + 3 * BUTTON_W + 48, y, BUTTON_W + 12,
                   BUTTON_H, s("cancel_send"), cancel_send)
     dialog.button("close", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
                   s("close"), lambda: dialog.finish(True))
     dialog.enable("download", False)
     dialog.enable("cancel_send", False)
+    # Enabled by the first render, once the live status says it is still
+    # signable — not on the strength of a stale history row.
+    dialog.enable("sign", False)
 
     threading.Thread(target=poller, name="signdocs-poll", daemon=True).start()
     try:
@@ -863,8 +1004,12 @@ def run_send(ctx, frame, store):
         except Exception:
             pass
 
-        if result_dialog(ctx, frame, s, result) == "track":
-            track_dialog(ctx, frame, store, s, entry, document_model)
+        # The same verified address that fills the sender label, so the button
+        # and the label can never disagree about who is signed in.
+        if result_dialog(ctx, frame, s, result,
+                         state.get("sender") or "") == "track":
+            track_dialog(ctx, frame, store, s, entry, document_model,
+                         account_email=state.get("sender") or "")
         return
 
 
@@ -877,6 +1022,51 @@ def _history_line(s, entry):
         entry.get("filename") or "",
         entry.get("kind") or "",
         s("status_" + (entry.get("status") or history.PENDING)),
+    )
+
+
+def _merge_signer(row, known):
+    """
+    A live status row filled out with what was recorded locally.
+
+    The server is authoritative about *state* — who has signed — and the local
+    record about *identity*: the status payloads carry no fiscal number, and
+    the single-session one carries no name either. Merging this way round
+    means a signer who has since been renamed upstream still shows their
+    current name, while the CPF the user typed is never invented.
+    """
+    local = known.get((row.get("email") or "").strip().lower()) or {}
+    return {
+        "name": row.get("name") or local.get("name"),
+        "email": row.get("email") or local.get("email"),
+        "fiscal": row.get("fiscal") or local.get("fiscal"),
+        "status": row.get("status"),
+    }
+
+
+def _entry_is_mine(entry, account_email):
+    """
+    True when this send is still open and the account is one of its signers.
+
+    History stores each signer's name and e-mail — an ordinary record, not a
+    credential — which is what lets an old row be judged without a round trip.
+    The link itself is deliberately absent and is minted only when the button
+    is actually pressed.
+
+    A finished or cancelled send has nothing left to sign, so it is excluded
+    here rather than discovered by a server round trip that answers 409.
+
+    A missing status means pending: an entry built by `run_send` has not been
+    through `history.add` yet, and it is by definition the send that just
+    happened.
+    """
+    if not entry:
+        return False
+    if (entry.get("status") or history.PENDING) != history.PENDING:
+        return False
+    return any(
+        oauth.matches_account(signer.get("email"), account_email)
+        for signer in (entry.get("signers") or [])
     )
 
 
@@ -909,10 +1099,17 @@ def run_history(ctx, frame, store):
 
     outcome = refresh()
 
-    width = 320
+    # 360 rather than 320: five buttons, one of which carries the longest
+    # caption in the extension.
+    width = 360
     height = 176
     dialog = Dialog(ctx, s("history_title"), width, height)
     inner = width - 2 * MARGIN
+
+    # Whose account this is, so a row can be checked against its signers
+    # without asking the server. Read once — it does not change while the
+    # dialog is open, and it is only ever used to decide what to offer.
+    account = oauth.account_email(store, stage)
 
     # The listbox shows a filtered view, so a selection index means nothing
     # without the exact rows it was drawn from. Keeping them together is what
@@ -930,6 +1127,13 @@ def run_history(ctx, frame, store):
         total = len(store_history.list())
         pending = len(store_history.pending())
         dialog.set_label("count", s("pending_count") % (pending, total))
+        # Redrawing moves the selection, so the button has to follow it.
+        # Guarded because redraw runs once from the only_pending listener,
+        # which is wired before the buttons exist.
+        try:
+            dialog.enable("sign", _entry_is_mine(selected(), account))
+        except Exception:
+            pass
 
     def selected():
         index = dialog.selected_index("items")
@@ -974,8 +1178,27 @@ def run_history(ctx, frame, store):
         entry = selected()
         if entry is None:
             return
-        track_dialog(ctx, frame, store, s, entry)
+        track_dialog(ctx, frame, store, s, entry, account_email=account)
         redraw()
+
+    def sign_selected():
+        entry = selected()
+        if not _entry_is_mine(entry, account):
+            return
+        # The link was never stored — see history.add — so it is minted now.
+        # That is the whole reason this works at all after the send window has
+        # been closed.
+        result = busy(ctx, parent_window(frame), s("busy_status"),
+                      lambda: api.sign_link(store, entry["kind"], entry["id"],
+                                            stage=stage))
+        if not _report(ctx, frame, result, s):
+            return
+        if not result.value:
+            # Already signed, cancelled, or not ours to sign. The server does
+            # not say which, on purpose.
+            msgbox.info(ctx, frame, s("sign_now_unavailable"), s("app"))
+            return
+        _open_in_browser(ctx, result.value)
 
     def refresh_clicked():
         again = refresh()
@@ -984,14 +1207,19 @@ def run_history(ctx, frame, store):
             msgbox.info(ctx, frame, s("refresh_failed") % again[2], s("app"))
 
     y = height - BUTTON_H - MARGIN
-    dialog.button("track", MARGIN, y, BUTTON_W + 8, BUTTON_H,
+    dialog.button("sign", MARGIN, y, BUTTON_W + 24, BUTTON_H, s("sign_now"),
+                  sign_selected)
+    dialog.button("track", MARGIN + BUTTON_W + 28, y, BUTTON_W + 8, BUTTON_H,
                   s("track_title"), track_selected)
-    dialog.button("cancel_send", MARGIN + BUTTON_W + 12, y, BUTTON_W + 20,
+    dialog.button("cancel_send", MARGIN + 2 * BUTTON_W + 40, y, BUTTON_W + 20,
                   BUTTON_H, s("cancel_send"), cancel_selected)
-    dialog.button("refresh", MARGIN + 2 * BUTTON_W + 36, y, BUTTON_W, BUTTON_H,
+    dialog.button("refresh", MARGIN + 3 * BUTTON_W + 64, y, BUTTON_W, BUTTON_H,
                   s("refresh"), refresh_clicked)
     dialog.button("close", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
                   s("close"), lambda: dialog.finish(True))
+
+    dialog.on_change("items", lambda: dialog.enable(
+        "sign", _entry_is_mine(selected(), account)))
 
     redraw()
     if outcome and outcome[2]:

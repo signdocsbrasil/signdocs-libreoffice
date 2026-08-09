@@ -195,9 +195,13 @@ def _send_session(store, document, signers, profile, key, stage):
         "kind": "session",
         "id": result.get("sessionId"),
         "transactionId": result.get("transactionId"),
+        "profile": profile,
         "links": [{
             "signerName": signers[0].get("name"),
             "signerEmail": signers[0].get("email"),
+            # None when the server withheld it: a CLICK_ONLY link for someone
+            # other than the sender is delivered by e-mail only, because on its
+            # own it is enough to sign. Absent, not an error.
             "url": signing_link(result.get("url"), result.get("clientSecret")),
             "inviteSent": bool(result.get("inviteSent")),
         }],
@@ -225,8 +229,11 @@ def _send_envelope(store, document, signers, profile, order, key, stage):
         links.append({
             "signerName": signer.get("name"),
             "signerEmail": signer.get("email"),
-            # The add-on tier returns a ready link; there is no separate
-            # clientSecret to join on this path.
+            # Ready to open: the add-on tier joins the secret for this path,
+            # because upstream add-session returns the URL and the secret as
+            # two fields and `url` alone loads an error page. Nothing to join
+            # here — and nothing that may be assumed either, so a link that
+            # arrives without its secret arrives as None.
             "url": entry.get("url"),
             "inviteSent": bool(entry.get("inviteSent")),
         })
@@ -235,6 +242,7 @@ def _send_envelope(store, document, signers, profile, order, key, stage):
         "kind": "envelope",
         "id": result.get("envelopeId"),
         "transactionId": None,
+        "profile": profile,
         "links": links,
         # True when the server overrode PARALLEL because a certificate
         # profile is in play; the UI should say so rather than let the user
@@ -261,6 +269,7 @@ def status_of(store, kind, ident, stage=None):
             # simply "everything is done".
             "signed_available": raw.get("status") == "COMPLETED",
             "transactionId": None,
+            "signers": _signers_from_envelope(raw),
             "raw": raw,
         }
 
@@ -272,8 +281,40 @@ def status_of(store, kind, ident, stage=None):
         "total": 1,
         "signed_available": status == "COMPLETED",
         "transactionId": raw.get("transactionId"),
+        # One signer, whose state is the session's own. No name on this
+        # payload — the caller fills it in from what it recorded at send time.
+        "signers": [{
+            "name": None,
+            "email": raw.get("signerEmail"),
+            "status": status,
+            "index": 1,
+        }],
         "raw": raw,
     }
+
+
+def _signers_from_envelope(raw):
+    """
+    One row per signer, in signing order.
+
+    The add-on tier passes the upstream envelope payload through whole, so
+    `sessions` is already here — "3 of 5 signed" was being computed from it and
+    the rest thrown away, which is why the tracker could say how many had
+    signed but never which ones.
+
+    Sorted by `signerIndex` because for a SEQUENTIAL envelope the order *is*
+    information: it says who is being waited on and who has not been asked yet.
+    """
+    rows = []
+    for entry in raw.get("sessions") or []:
+        rows.append({
+            "name": entry.get("signerName"),
+            "email": entry.get("signerEmail"),
+            "status": entry.get("status"),
+            "index": entry.get("signerIndex") or 0,
+        })
+    rows.sort(key=lambda r: r["index"] or 0)
+    return rows
 
 
 # -------------------------------------------------------------- download
@@ -342,6 +383,40 @@ def cancel(store, kind, ident, stage=None):
         "cancelledCount": result.get("cancelledCount") or 0,
         "preservedSignedCount": result.get("preservedSignedCount") or 0,
     }
+
+
+# ------------------------------------------------------------- sign link
+def sign_link(store, kind, ident, stage=None):
+    """
+    A fresh signing link for the signed-in account's own signature.
+
+    The link is never stored — not here, not in the profile, not in the
+    history. It is a bearer credential, and the history file is plaintext JSON
+    on disk. The server mints a new one on each call instead, so "get me back
+    to my document" costs a round trip rather than a stored secret.
+
+    The server decides whether the caller is entitled to it, and returns 404
+    when they are not. Envelopes are addressed by envelope id: the server picks
+    out the caller's own session, so this side never has to enumerate anyone
+    else's.
+
+    Returns None when there is nothing to open — already signed, cancelled, or
+    not the caller's to sign.
+    """
+    quoted = urllib.parse.quote(str(ident), safe="")
+    path = ("/self-sign-link/envelope/" + quoted) if kind == "envelope" \
+        else ("/self-sign-link/" + quoted)
+
+    try:
+        result = _call(store, "POST", path, {}, stage) or {}
+    except HttpError as exc:
+        # 404 is "not yours, or gone"; 409 is "no longer signable". Both are
+        # answers rather than faults, and the caller shows a message.
+        if exc.status in (404, 409):
+            return None
+        raise
+
+    return result.get("url") or None
 
 
 def init_session(store, stage=None):

@@ -110,12 +110,35 @@ def test_records_carry_no_document_content_or_signing_links(tmp_path):
     assert "ss_secret_" not in raw
 
 
-def test_signer_records_keep_only_name_and_email(history):
+def test_signer_records_keep_only_name_email_and_fiscal(history):
+    # The tracking list has to say WHO is outstanding, and the status payloads
+    # carry no fiscal number — so this is the only source for it. Personal
+    # data, kept at 0600 (store.FILE_MODE), but not a credential: the line the
+    # whitelist draws is that a CPF identifies a signer while a signing link
+    # IS the signature.
     history.add(entry(
         "env-1",
-        signers=[{"name": "Ana", "email": "a@b.com", "fiscalDigits": "52998224725"}],
+        signers=[{"name": "Ana", "email": "a@b.com", "fiscal": "52998224725",
+                  "url": "https://sign.example/s/x?cs=ss_secret_abc",
+                  "fiscalDigits": "52998224725"}],
     ))
-    assert history.list()[0]["signers"] == [{"name": "Ana", "email": "a@b.com"}]
+    assert history.list()[0]["signers"] == [
+        {"name": "Ana", "email": "a@b.com", "fiscal": "52998224725"},
+    ]
+
+
+def test_a_signer_field_nobody_whitelisted_is_dropped(history):
+    # Built field by field rather than copied-then-pruned, so a caller cannot
+    # widen what reaches disk by adding a key upstream.
+    history.add(entry(
+        "env-1",
+        signers=[{"name": "Ana", "email": "a@b.com",
+                  "signingUrl": "https://sign.example/s/x?cs=ss_secret_abc",
+                  "birthDate": "1980-01-01"}],
+    ))
+    stored = history.list()[0]["signers"][0]
+    assert set(stored) == {"name", "email", "fiscal"}
+    assert stored["fiscal"] is None
 
 
 def test_stages_keep_separate_stores():
@@ -200,3 +223,32 @@ def test_transaction_id_is_kept_but_no_link_is(history):
     # link is a bearer credential and must never be stored.
     assert record["transactionId"] == "tx-9"
     assert "url" not in record
+
+
+def test_a_minted_signing_link_never_reaches_the_profile(tmp_path):
+    """
+    The re-mint design exists to keep this true.
+
+    "Assinar agora" works after the send window is closed because the link is
+    minted on demand, not because it was kept. If a link ever starts being
+    stored here, that button has quietly become a stored credential in a
+    plaintext file, and this is the test that should stop it.
+    """
+    path = tmp_path / "signdocs.json"
+    history = History(JsonStore(str(path)), "prod")
+
+    history.add(entry("env-1"))
+    # Whatever a future caller passes alongside a send, none of it is copied:
+    # the record is built field by field from a whitelist.
+    history.add(entry(
+        "env-2",
+        url="https://sign.example/s/ss_1?cs=ss_secret_leak",
+        signingUrl="https://sign.example/s/ss_2?cs=ss_secret_leak2",
+        clientSecret="ss_secret_leak3",
+        links=[{"url": "https://sign.example/s/ss_3?cs=ss_secret_leak4"}],
+    ))
+
+    raw = path.read_text(encoding="utf-8")
+    assert "ss_secret_" not in raw
+    assert "cs=" not in raw
+    assert "clientSecret" not in raw
