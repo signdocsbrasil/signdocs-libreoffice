@@ -288,6 +288,30 @@ def main():
     except HttpError as exc:
         check("the 60s resend throttle still bites", exc.status == 409, exc.status)
 
+    section("a subuser is never a signatory")
+    # Address supplied by the environment, never hardcoded: this repo is going
+    # public and the only useful value is a real person's e-mail.
+    #
+    #   SIGNDOCS_E2E_SUBUSER=<an address registered as a Convidados subuser>
+    subuser = os.environ.get("SIGNDOCS_E2E_SUBUSER")
+    if not subuser:
+        print("  skipped — set SIGNDOCS_E2E_SUBUSER to a registered subuser")
+    else:
+        try:
+            api.send(store, document,
+                     [{"name": "Subusuario", "email": subuser, "fiscal": CPF_A}],
+                     profile="click_only", stage=STAGE)
+            check("a session addressed to a subuser is refused", False,
+                  "the send was ACCEPTED")
+        except HttpError as exc:
+            # 422 with the app's wording. A subuser signs against the master's
+            # row, never one of their own, so this document could never be
+            # legitimately completed.
+            check("a session addressed to a subuser is refused",
+                  exc.status == 422, "%s %s" % (exc.status, exc.message))
+            check("the refusal names the offending address",
+                  subuser in (exc.message or ""), exc.message)
+
     section("forced signing mode")
     forced = api.send(
         store, document,

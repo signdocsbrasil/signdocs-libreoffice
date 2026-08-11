@@ -144,6 +144,14 @@ _STRINGS = {
     "invite_not_sent": {"pt": "sem convite — envie o link você mesmo",
                         "en": "no invitation — send the link yourself",
                         "es": "sin invitación — envía el enlace tú mismo"},
+    # The app's own wording, verbatim, so the same rule reads the same wherever
+    # somebody meets it. A subuser signs against the master's row, never one of
+    # their own, so their address is not a signatory identity.
+    "subuser_not_signer": {
+        "pt": "Subusuários não podem ser signatários.",
+        "en": "Sub-users cannot be signatories.",
+        "es": "Los subusuarios no pueden ser firmantes.",
+    },
     "sign_now": {"pt": "Assinar agora", "en": "Sign now", "es": "Firmar ahora"},
     # Marks the reader's own row in the signer list, which is also the row the
     # Assinar agora button acts on.

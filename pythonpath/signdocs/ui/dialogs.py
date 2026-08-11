@@ -98,7 +98,24 @@ def ensure_connected(ctx, frame, store, s):
 
 
 # ----------------------------------------------------------- signer dialog
-def signer_dialog(ctx, frame, s, signer=None):
+def _blocked_signer_email(state):
+    """
+    The signed-in address, when it may not be a signer.
+
+    A subuser is not a signatory identity — when a subuser signs, they sign
+    against the master's row, never one of their own. The server refuses such a
+    send outright; this only saves the user from discovering it after building
+    a whole send and uploading a PDF.
+
+    Only the account's own address can be checked here. Whether somebody
+    *else's* address belongs to a subuser is a directory question, and the
+    answer lives on the server.
+    """
+    user = ((state or {}).get("quota") or {}).get("user") or {}
+    return user.get("email", "") if user.get("isSubuser") else ""
+
+
+def signer_dialog(ctx, frame, s, signer=None, blocked_email=""):
     """Add or edit one signer. Returns the dict, or None if cancelled."""
     width = 220
     dialog = Dialog(ctx, s("signer_title"), width, 88)
@@ -126,6 +143,11 @@ def signer_dialog(ctx, frame, s, signer=None):
             return
         if not validators.is_valid_email(email):
             dialog.model.getByName("err").Label = s("email")
+            return
+        # Caught here so it costs a keystroke rather than a PDF upload. The
+        # server refuses it either way — this is a courtesy, not the gate.
+        if oauth.matches_account(email, blocked_email):
+            dialog.model.getByName("err").Label = s("subuser_not_signer")
             return
         classified = validators.classify(fiscal)
         if classified.kind is None or not classified.valid:
@@ -531,7 +553,7 @@ def _add_signer(ctx, frame, s, dialog, state):
         msgbox.error(ctx, frame,
                      s("max_signers") % api.MAX_SIGNERS, s("app"))
         return
-    signer = signer_dialog(ctx, frame, s)
+    signer = signer_dialog(ctx, frame, s, blocked_email=_blocked_signer_email(state))
     if signer:
         state["signers"].append(signer)
         _refresh_signers(dialog, state)
@@ -541,7 +563,8 @@ def _edit_signer(ctx, frame, s, dialog, state):
     index = dialog.selected_index("signers")
     if index < 0 or index >= len(state["signers"]):
         return
-    signer = signer_dialog(ctx, frame, s, state["signers"][index])
+    signer = signer_dialog(ctx, frame, s, state["signers"][index],
+                           blocked_email=_blocked_signer_email(state))
     if signer:
         state["signers"][index] = signer
         _refresh_signers(dialog, state)

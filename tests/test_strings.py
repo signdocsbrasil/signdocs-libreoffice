@@ -206,3 +206,12 @@ def test_signer_line_does_not_repeat_the_email_standing_in_for_a_name():
     s = strings.Strings("pt")
     line = strings.signer_line(s, {"email": "ana@ex.com", "status": "ACTIVE"})
     assert line.count("ana@ex.com") == 1
+
+
+def test_subuser_not_signer_uses_the_apps_wording():
+    # Same rule, same sentence, wherever somebody meets it. The Flutter app
+    # says exactly this in signatario_fields.dart.
+    s = strings.Strings("pt")
+    assert s("subuser_not_signer") == "Subusuários não podem ser signatários."
+    assert strings.Strings("en")("subuser_not_signer") != "subuser_not_signer"
+    assert strings.Strings("es")("subuser_not_signer") != "subuser_not_signer"
