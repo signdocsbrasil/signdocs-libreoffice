@@ -13,6 +13,12 @@ on:
 permissions:
   contents: read
   security-events: write
+  # Required only while this repository is private: the analyse step reads its
+  # own workflow run, and without this the whole job ends in "Resource not
+  # accessible by integration" *after* a clean scan. The failure is easy to
+  # misread as a finding — it is not. The queries all ran; the results simply
+  # never reached the Security tab, which is the worse half of it.
+  actions: read
 
 jobs:
   analyse:
