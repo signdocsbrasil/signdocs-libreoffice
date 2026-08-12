@@ -17,7 +17,25 @@ cd /d "%~dp0"
 echo.
 echo   SignDocs Brasil - extensao para LibreOffice
 echo   Ambiente: HOMOLOGACAO (hml)
+echo   Abrindo:  %LABEL%
 echo.
+
+rem --- 0. qual modulo abrir -----------------------------------------
+rem  Os quatro modulos sao caminhos diferentes: o Addons.xcu cita os quatro
+rem  no Context, e o intake.py mapeia cada um ao seu proprio filtro de
+rem  exportacao para PDF. Um modulo faltando em uma das listas falha de um
+rem  jeito que os outros nunca mostram.
+rem
+rem    try-it.cmd            Writer (padrao)
+rem    try-it.cmd --calc     ...ou --impress, --draw, --writer
+rem    try-it.cmd --all      os quatro de uma vez, no mesmo perfil
+set "MODULES=--writer"
+set "LABEL=Writer"
+if /i "%~1"=="--calc"    set "MODULES=--calc"    & set "LABEL=Calc"
+if /i "%~1"=="--impress" set "MODULES=--impress" & set "LABEL=Impress"
+if /i "%~1"=="--draw"    set "MODULES=--draw"    & set "LABEL=Draw"
+if /i "%~1"=="--writer"  set "MODULES=--writer"  & set "LABEL=Writer"
+if /i "%~1"=="--all"     set "MODULES=--writer --calc --impress --draw" & set "LABEL=Writer, Calc, Impress e Draw"
 
 rem --- 1. localizar o LibreOffice ------------------------------------
 rem  unopkg.COM e nao unopkg.EXE: no Windows o .exe retorna na hora e o
@@ -106,7 +124,7 @@ echo     Perfil de teste: %SDPROFILE%
 echo     (apague essa pasta para desfazer tudo)
 echo.
 
-start "" "%LO%\soffice.exe" -env:UserInstallation=%PROFILE_URL% --norestore --writer
+start "" "%LO%\soffice.exe" -env:UserInstallation=%PROFILE_URL% --norestore %MODULES%
 
 echo   Pronto. Pode fechar esta janela.
 echo.

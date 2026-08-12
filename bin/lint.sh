@@ -90,3 +90,38 @@ print('  ok  implementation name matches ProtocolHandler.xcu (%s)' % impl)
 PY
 
 echo "PASS"
+
+# ------- every office module is in BOTH the menu contexts and the filters
+# Addons.xcu decides where the menu appears; intake.FILTERS decides whether the
+# document can be exported once it is clicked. A module in one list and not the
+# other fails in a way no other module reveals: the menu missing in Calc, or
+# present everywhere and the export dying only in Draw.
+python3 - <<'PY' || exit 1
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+OOR = '{http://openoffice.org/2001/registry}'
+
+contexts = set()
+for prop in ET.parse('Addons.xcu').getroot().iter():
+    if prop.get(OOR + 'name') == 'Context':
+        value = prop.findtext('value') or ''
+        contexts.update(s.strip() for s in value.split(',') if s.strip())
+
+src = open('pythonpath/signdocs/intake.py', encoding='utf-8').read()
+filters = set(re.findall(r'\("(com\.sun\.star\.[^"]+)",\s*"[^"]+_pdf_Export"', src))
+
+missing_filter = contexts - filters
+missing_menu = filters - contexts
+if missing_filter or missing_menu:
+    if missing_filter:
+        sys.stderr.write('FAIL: menu shown but no PDF export filter: %s\n'
+                         % sorted(missing_filter))
+    if missing_menu:
+        sys.stderr.write('FAIL: export filter but the menu never appears: %s\n'
+                         % sorted(missing_menu))
+    sys.exit(1)
+print('  ok  menu contexts and export filters cover the same %d modules'
+      % len(contexts))
+PY
