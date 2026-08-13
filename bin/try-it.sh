@@ -62,8 +62,27 @@ PY
 )"
 OXT="signdocs-brasil-${VERSION}.oxt"
 
+# Rebuild when the artefact is missing OR older than anything it ships.
+#
+# Only checking for absence meant a stale .oxt was installed silently, and the
+# symptom is the worst kind: the extension loads, the dialogs open, and the
+# change you are there to test is simply not in it. That has now cost two
+# rounds of "is my build off?" -- so the check is mtime, not existence.
+STALE=""
 if [ ! -f "$OXT" ]; then
-	echo "building $OXT"
+	STALE="missing"
+else
+	# Files only, and never __pycache__: running the tests rewrites .pyc files
+	# that are not shipped, and rebuilding on those would mean rebuilding on
+	# every run.
+	NEWER="$(find pythonpath description.xml Addons.xcu ProtocolHandler.xcu \
+		META-INF signdocs_addon.py vendor icons \
+		-name __pycache__ -prune -o -type f -newer "$OXT" -print 2>/dev/null | head -1)"
+	[ -n "$NEWER" ] && STALE="$NEWER is newer"
+fi
+
+if [ -n "$STALE" ]; then
+	echo "rebuilding $OXT ($STALE)"
 	bash bin/build-oxt.sh >/dev/null
 fi
 
