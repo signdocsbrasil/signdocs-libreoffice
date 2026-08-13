@@ -161,6 +161,8 @@ def main():
     sys.path.insert(0, os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pythonpath"
     ))
+    from signdocs import api as probe_api  # noqa: E402
+    from signdocs import config as probe_config  # noqa: E402
     from signdocs import intake  # noqa: E402 - path set up immediately above
 
     for factory, expected_module in (
@@ -357,6 +359,19 @@ def main():
         # The list order becomes signerIndex, so on a sequential send it
         # decides who is asked first. Before this the only fix for a wrong
         # order was deleting everybody below the mistake and retyping them.
+        check("the send dialog offers signer import",
+              "import" in built.get(s("send_title"), []))
+        check("and says the expected column order",
+              "import_hint" in built.get(s("send_title"), []))
+        # The sender is otherwise never told when the links die; the signer is
+        # told by e-mail, so this closes the gap for the one person who is not.
+        check("the review screen states the signing window",
+              str(probe_config.SIGNING_WINDOW_HOURS) in
+              (ui_strings.Strings("pt")("link_expiry")
+               % probe_config.SIGNING_WINDOW_HOURS))
+        check("the signer cap is what one request can finish",
+              probe_api.MAX_SIGNERS == 30, probe_api.MAX_SIGNERS)
+
         check("the signer list offers move up/down",
               "up" in built.get(s("send_title"), [])
               and "down" in built.get(s("send_title"), []))

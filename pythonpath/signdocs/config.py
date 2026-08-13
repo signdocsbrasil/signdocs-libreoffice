@@ -74,6 +74,13 @@ STORAGE = {
 #: The API rejects a base64 document body over 10MB; fail before the upload.
 MAX_BASE64_BYTES = 10 * 1024 * 1024
 
+#: How long a signer has, in hours. Mirrors DEFAULT_SIGNING_WINDOW_MINUTES in
+#: external-api/src/config/signing-window.ts (4320 minutes). Copied rather than
+#: fetched — the create response does not carry it — so a test asserts the two
+#: agree, the same way the order-forcing rule is pinned to the server's list.
+#: The consumer app's window is 10 days and is NOT this number.
+SIGNING_WINDOW_HOURS = 72
+
 #: Loopback ports offered for the RFC 8252 redirect.
 #:
 #: All eight are pre-registered as callback URLs on the Cognito app client,

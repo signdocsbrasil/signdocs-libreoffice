@@ -168,10 +168,51 @@ _STRINGS = {
         "en": "This CPF/CNPJ is already in the list.",
         "es": "Este CPF/CNPJ ya está en la lista.",
     },
+    # The sender is otherwise never told. The signer IS told — the invitation
+    # e-mail carries the real date — so this closes the gap for the one person
+    # who gets no e-mail. Says "a partir do envio" because the clock starts at
+    # send time, not at the moment they read this.
+    "link_expiry": {
+        "pt": "Os links de assinatura expiram em %d horas a partir do envio.",
+        "en": "Signing links expire %d hours after sending.",
+        "es": "Los enlaces de firma caducan %d horas después del envío.",
+    },
     "duplicate_email": {
         "pt": "Este e-mail já está na lista.",
         "en": "This e-mail is already in the list.",
         "es": "Este correo ya está en la lista.",
+    },
+    "import_signers": {"pt": "Importar", "en": "Import", "es": "Importar"},
+    "import_title": {"pt": "Importar lista de signatários",
+                     "en": "Import signer list",
+                     "es": "Importar lista de firmantes"},
+    "import_filter": {"pt": "Lista de signatários (CSV, XLSX, TXT)",
+                      "en": "Signer list (CSV, XLSX, TXT)",
+                      "es": "Lista de firmantes (CSV, XLSX, TXT)"},
+    # Says the column order, because getting it wrong is the commonest failure
+    # and the file is usually built by hand in a spreadsheet.
+    "import_hint": {
+        "pt": "Uma linha por signatário: nome, CPF/CNPJ, e-mail.",
+        "en": "One row per signer: name, CPF/CNPJ, e-mail.",
+        "es": "Una fila por firmante: nombre, CPF/CNPJ, correo.",
+    },
+    "import_added": {"pt": "%d signatário(s) importado(s).",
+                     "en": "%d signer(s) imported.",
+                     "es": "%d firmante(s) importado(s)."},
+    "import_none": {
+        "pt": "Nenhuma linha válida no arquivo.",
+        "en": "No valid rows in the file.",
+        "es": "Ninguna fila válida en el archivo.",
+    },
+    # Row numbers so the user can go and fix those lines.
+    "import_errors": {"pt": "Linhas com problema:", "en": "Rows with problems:",
+                      "es": "Filas con problemas:"},
+    "import_truncated": {
+        "pt": "O arquivo tem mais linhas do que cabem: só as %d primeiras "
+              "foram adicionadas.",
+        "en": "The file has more rows than fit: only the first %d were added.",
+        "es": "El archivo tiene más filas de las que caben: solo se añadieron "
+              "las %d primeras.",
     },
     "move_up": {"pt": "Subir", "en": "Up", "es": "Subir"},
     "move_down": {"pt": "Descer", "en": "Down", "es": "Bajar"},

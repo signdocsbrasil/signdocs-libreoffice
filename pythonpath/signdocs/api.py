@@ -29,7 +29,7 @@ import json
 import urllib.parse
 import uuid
 
-from signdocs import config, oauth, validators
+from signdocs import config, intake, oauth, validators
 from signdocs.httpclient import HttpError, get_bytes, request
 
 #: UI value -> policy profile.
@@ -51,8 +51,21 @@ PROFILES = {
 
 ORDERS = ("PARALLEL", "SEQUENTIAL")
 
-#: The API enforces this with an explicit 400; fail before the upload.
-MAX_SIGNERS = 100
+#: Well below the API's own limit of 100, and deliberately so.
+#:
+#: create-envelope adds one session per signer SEQUENTIALLY inside a single
+#: request, and API Gateway gives that request 30 seconds — the Lambda's 120s
+#: timeout is irrelevant, because nobody is still listening. Measured in
+#: production over 60 days: envelope create averages 1.7s and each add-session
+#: 1.0s (2.2s at the observed maximum), so the ceiling is somewhere around 25
+#: signers on a good day and 12 on a bad one.
+#:
+#: Past that the client sees a 504 while the Lambda quietly finishes the
+#: envelope: quota spent, invitations sent. Retrying in the same dialog is
+#: safe — the idempotency key is reused — but starting over mints a new key and
+#: charges a second time. So the cap is set where the request actually
+#: completes rather than where the API says it may.
+MAX_SIGNERS = 30
 
 
 class ValidationError(Exception):
@@ -383,6 +396,59 @@ def cancel(store, kind, ident, stage=None):
         "cancelledCount": result.get("cancelledCount") or 0,
         "preservedSignedCount": result.get("preservedSignedCount") or 0,
     }
+
+
+# --------------------------------------------------------- signer import
+class PlanRequired(Exception):
+    """The account's plan does not include bulk import. Carries an upgrade URL."""
+
+    def __init__(self, message, upgrade_url=None):
+        Exception.__init__(self, message)
+        self.message = message
+        self.upgrade_url = upgrade_url
+
+
+def import_signers(store, raw, filename, stage=None):
+    """
+    Parse a signer list server-side and return `(signers, errors)`.
+
+    Nothing is created: the rows come back for the user to check and correct,
+    and quota is spent only by the send that follows. So a malformed file
+    costs nothing, and the row errors are data rather than a failure.
+
+    `errors` are `{"row": N, "reason": str}` with N counting from 1, matching
+    the spreadsheet's own numbering.
+
+    Blocking — worker thread only.
+    """
+    payload = {
+        "csvBase64": intake.encode(raw),
+        "filename": filename or "lista.csv",
+    }
+    try:
+        result = _call(store, "POST", "/upload-csv", payload, stage) or {}
+    except HttpError as exc:
+        if exc.status == 402:
+            # A plan limit, not a fault. The caller offers the upgrade rather
+            # than showing a stack of JSON.
+            payload_body = exc.payload if isinstance(exc.payload, dict) else {}
+            raise PlanRequired(exc.message, payload_body.get("upgradeUrl"))
+        raise
+
+    signers = [
+        {
+            "name": row.get("name") or "",
+            "email": row.get("email") or "",
+            # The parser returns digits; the dialog formats for display.
+            "fiscal": row.get("cpf") or row.get("cnpj") or "",
+        }
+        for row in (result.get("signers") or [])
+    ]
+    errors = [
+        {"row": e.get("row"), "reason": e.get("reason") or ""}
+        for e in (result.get("errors") or [])
+    ]
+    return signers, errors
 
 
 # ------------------------------------------------------------- sign link

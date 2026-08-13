@@ -209,6 +209,35 @@ class Dialog(object):
             pass
 
 
+def pick_file(ctx, title, patterns=()):
+    """
+    Ask for a file with the office's own dialog. Returns a path, or None.
+
+    Uses the office picker rather than a typed path: this runs on Windows,
+    macOS and Linux, and it is the only one of the three that already knows
+    what "Documentos" means on each.
+    """
+    try:
+        picker = ctx.ServiceManager.createInstanceWithContext(
+            "com.sun.star.ui.dialogs.FilePicker", ctx)
+        picker.setTitle(title)
+        for label, glob in patterns:
+            picker.appendFilter(label, glob)
+        if patterns:
+            picker.setCurrentFilter(patterns[0][0])
+        if not picker.execute():
+            return None
+        files = picker.getFiles()
+        if not files:
+            return None
+        import unohelper
+        return unohelper.fileUrlToSystemPath(files[0])
+    except Exception:
+        # No picker on a headless or restricted session. The caller reports it
+        # rather than the dialog dying under them.
+        return None
+
+
 def parent_window(frame):
     try:
         return frame.getContainerWindow() if frame else None

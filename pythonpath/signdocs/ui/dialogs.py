@@ -28,6 +28,7 @@ from signdocs.ui.widgets import (
     Dialog,
     copy_to_clipboard,
     parent_window,
+    pick_file,
 )
 
 PROFILE_KEYS = strings.PROFILE_ORDER
@@ -530,7 +531,8 @@ def send_dialog(ctx, frame, store, s, state):
     wipe the form — the same trap the ONLYOFFICE and Nextcloud implementations
     both call out.
     """
-    width = 300
+    # 360 rather than 300: the signer row carries six buttons now.
+    width = 360
     inner = width - 2 * MARGIN
 
     # Shown before any effort is invested in the form, because that is the
@@ -584,25 +586,31 @@ def send_dialog(ctx, frame, store, s, state):
     dialog.label("order_note", 80, y + ROW, inner - 72, 10, "")
 
     y += ROW + 14
-    dialog.label("l3", MARGIN, y, inner, 10, s("signers"))
+    dialog.label("l3", MARGIN, y, 90, 10, s("signers"))
+    dialog.label("import_hint", MARGIN + 92, y, inner - 92, 10, s("import_hint"))
     y += 12
     dialog.listctl("signers", MARGIN, y, inner, 58,
                    [_signer_line(i, sg) for i, sg in enumerate(state["signers"])])
 
     y += 62
-    dialog.button("add", MARGIN, y, BUTTON_W, BUTTON_H, s("add"),
+    dialog.button("add", MARGIN, y, 50, BUTTON_H, s("add"),
                   lambda: _add_signer(ctx, frame, s, dialog, state))
-    dialog.button("edit", MARGIN + BUTTON_W + 4, y, BUTTON_W, BUTTON_H,
+    dialog.button("edit", MARGIN + 54, y, 44, BUTTON_H,
                   s("edit"), lambda: _edit_signer(ctx, frame, s, dialog, state))
-    dialog.button("remove", MARGIN + 2 * (BUTTON_W + 4), y, BUTTON_W, BUTTON_H,
+    dialog.button("remove", MARGIN + 102, y, 50, BUTTON_H,
                   s("remove"), lambda: _remove_signer(dialog, state, s))
+    # Shown to everyone, not just Avançado accounts: hiding it means nobody
+    # discovers the feature exists. The server answers 402 and the click
+    # offers the upgrade page.
+    dialog.button("import", MARGIN + 156, y, 52, BUTTON_H, s("import_signers"),
+                  lambda: _import_signers(ctx, frame, store, s, dialog, state))
     # The list order IS the signing order — it becomes signerIndex, 1-based.
     # Getting it wrong on a sequential send means the wrong person is asked
     # first, and the only fix without these was to remove everybody below the
     # mistake and retype them, CPFs included.
-    dialog.button("up", MARGIN + 3 * (BUTTON_W + 4), y, 44, BUTTON_H,
+    dialog.button("up", MARGIN + 212, y, 42, BUTTON_H,
                   s("move_up"), lambda: _move_signer(dialog, state, s, -1))
-    dialog.button("down", MARGIN + 3 * (BUTTON_W + 4) + 48, y, 44, BUTTON_H,
+    dialog.button("down", MARGIN + 258, y, 42, BUTTON_H,
                   s("move_down"), lambda: _move_signer(dialog, state, s, 1))
 
     y = height - BUTTON_H - MARGIN
@@ -728,6 +736,76 @@ def _remove_signer(dialog, state, s):
         _refresh_signers(dialog, state, s)
 
 
+def _import_signers(ctx, frame, store, s, dialog, state):
+    """
+    Fill the signer list from a spreadsheet.
+
+    Typing thirty signers by hand is where CPF slips come from, and a slipped
+    CPF still passes the check digits — it just attributes the signature to
+    somebody else. Parsing happens server-side, where the plan gate and the
+    same validators live.
+
+    Rows are ADDED to whatever is already listed rather than replacing it, so
+    an import cannot silently discard names already typed.
+    """
+    path = pick_file(ctx, s("import_title"),
+                     [(s("import_filter"), "*.csv;*.xlsx;*.txt")])
+    if not path:
+        return
+
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read()
+    except OSError as exc:
+        msgbox.error(ctx, frame, str(exc), s("app"))
+        return
+
+    stage = config.current_stage(store)
+    result = busy(ctx, parent_window(frame), s("busy_status"),
+                  lambda: api.import_signers(store, raw, os.path.basename(path),
+                                             stage=stage))
+    if result is None:
+        return
+    if not result.ok:
+        error = result.error
+        if isinstance(error, api.PlanRequired):
+            # A plan limit, not a fault: say so and offer the page rather than
+            # showing an error the user cannot act on.
+            if error.upgrade_url and msgbox.confirm(
+                    ctx, frame, error.message, s("app")):
+                _open_in_browser(ctx, error.upgrade_url)
+            return
+        msgbox.error(ctx, frame, str(error) or s("error"), s("app"))
+        return
+
+    imported, errors = result.value
+
+    # Never silently drop the tail: the cap exists because a bigger envelope
+    # times out mid-create, and the user needs to know which rows did not
+    # make it.
+    room = api.MAX_SIGNERS - len(state["signers"])
+    truncated = max(0, len(imported) - room)
+    if room > 0:
+        state["signers"].extend(imported[:room])
+    _refresh_signers(dialog, state, s)
+
+    lines = []
+    added = max(0, min(len(imported), room))
+    lines.append(s("import_added") % added if added else s("import_none"))
+    if truncated:
+        lines.append(s("import_truncated") % api.MAX_SIGNERS)
+    if errors:
+        lines.append("")
+        lines.append(s("import_errors"))
+        # Capped: a sheet where every row is wrong should not produce a
+        # message box taller than the screen.
+        for entry in errors[:10]:
+            lines.append("  %s: %s" % (entry.get("row"), entry.get("reason")))
+        if len(errors) > 10:
+            lines.append("  …")
+    msgbox.info(ctx, frame, "\n".join(lines), s("app"))
+
+
 def _move_signer(dialog, state, s, delta):
     """
     Move the selected signer one place up or down.
@@ -767,6 +845,7 @@ def review_dialog(ctx, frame, s, state, filename):
                     s("sequential") if state["order"] == "SEQUENTIAL"
                     else s("parallel")),
         "%s: %s" % (s("sender"), state["sender"] or "—"),
+        s("link_expiry") % config.SIGNING_WINDOW_HOURS,
     ]
 
     height = 96 + 10 * min(len(state["signers"]), 6)
@@ -833,7 +912,11 @@ def result_dialog(ctx, frame, s, sent, account_email=""):
 
     dialog.label("t", MARGIN, MARGIN, inner, 10, s("sent_ok"))
     control = dialog.listctl("links", MARGIN, MARGIN + 12, inner,
-                             height - 60, entries)
+                             height - 72, entries)
+    # Said again here because this is where the links are actually in front of
+    # the user, and a link with no visible deadline invites being sat on.
+    dialog.label("expiry", MARGIN, height - 56, inner, 10,
+                 s("link_expiry") % config.SIGNING_WINDOW_HOURS)
     # Preselect, so the single-signer case — much the commonest — needs no
     # click before the buttons mean anything.
     if entries:
