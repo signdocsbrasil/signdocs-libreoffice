@@ -161,7 +161,7 @@ def _recent_line(signer):
 
 
 def signer_dialog(ctx, frame, s, signer=None, blocked_email="", recents=(),
-                  taken_fiscal=()):
+                  taken_fiscal=(), taken_email=()):
     """Add or edit one signer. Returns the dict, or None if cancelled."""
     width = 220
     dialog = Dialog(ctx, s("signer_title"), width, 88)
@@ -194,6 +194,13 @@ def signer_dialog(ctx, frame, s, signer=None, blocked_email="", recents=(),
         # server refuses it either way — this is a courtesy, not the gate.
         if oauth.matches_account(email, blocked_email):
             dialog.model.getByName("err").Label = s("subuser_not_signer")
+            return
+        # The address is where the link is delivered, so a repeat sends one
+        # person two links to one inbox and makes "who has signed" ambiguous
+        # in every status view. Telegram and the CSV importer have always
+        # refused this; the desktop channels were the odd ones out.
+        if email.strip().lower() in taken_email:
+            dialog.model.getByName("err").Label = s("duplicate_email")
             return
         classified = validators.classify(fiscal)
         if classified.kind is None or not classified.valid:
@@ -229,6 +236,15 @@ def signer_dialog(ctx, frame, s, signer=None, blocked_email="", recents=(),
     dialog.button("ok", width - BUTTON_W - MARGIN, 68, BUTTON_W, BUTTON_H,
                   s("ok"), accept)
     return dialog.show(parent_window(frame))
+
+
+def _taken_email(state, skip=None):
+    """Addresses already spoken for, lowercased. `skip` is the row being edited."""
+    return {
+        (sg.get("email") or "").strip().lower()
+        for i, sg in enumerate(state.get("signers") or [])
+        if i != skip and (sg.get("email") or "").strip()
+    }
 
 
 def _taken_fiscal(state, skip=None):
@@ -684,7 +700,8 @@ def _add_signer(ctx, frame, s, dialog, state):
     signer = signer_dialog(ctx, frame, s,
                            blocked_email=_blocked_signer_email(state),
                            recents=state.get("recents") or (),
-                           taken_fiscal=_taken_fiscal(state))
+                           taken_fiscal=_taken_fiscal(state),
+                           taken_email=_taken_email(state))
     if signer:
         state["signers"].append(signer)
         _refresh_signers(dialog, state, s)
@@ -697,7 +714,8 @@ def _edit_signer(ctx, frame, s, dialog, state):
     signer = signer_dialog(ctx, frame, s, state["signers"][index],
                            blocked_email=_blocked_signer_email(state),
                            recents=state.get("recents") or (),
-                           taken_fiscal=_taken_fiscal(state, skip=index))
+                           taken_fiscal=_taken_fiscal(state, skip=index),
+                           taken_email=_taken_email(state, skip=index))
     if signer:
         state["signers"][index] = signer
         _refresh_signers(dialog, state, s)

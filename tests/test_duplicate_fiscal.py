@@ -59,3 +59,43 @@ def test_editing_still_sees_the_other_rows():
 def test_blank_fiscals_are_not_treated_as_a_shared_value():
     st = {"signers": [{"name": "A", "fiscal": ""}, {"name": "B"}]}
     assert taken(st) == set()
+
+
+# ---------------------------------------------------------- duplicate email
+def taken_email(state, skip=None):
+    """Mirror of dialogs._taken_email."""
+    return {
+        (sg.get("email") or "").strip().lower()
+        for i, sg in enumerate(state.get("signers") or [])
+        if i != skip and (sg.get("email") or "").strip()
+    }
+
+
+def state_emails(*emails):
+    return {"signers": [{"name": "P%d" % i, "email": e}
+                        for i, e in enumerate(emails)]}
+
+
+def test_a_repeated_address_is_detected():
+    st = state_emails("ana@x.com")
+    assert "ana@x.com" in taken_email(st)
+
+
+def test_address_matching_ignores_case_and_space():
+    st = state_emails(" Ana@X.com ")
+    assert "ana@x.com" in taken_email(st)
+
+
+def test_a_different_address_is_allowed():
+    st = state_emails("ana@x.com")
+    assert "bruno@x.com" not in taken_email(st)
+
+
+def test_editing_a_signer_does_not_collide_with_their_own_address():
+    st = state_emails("ana@x.com", "bruno@x.com")
+    assert "bruno@x.com" not in taken_email(st, skip=1)
+
+
+def test_blank_addresses_are_not_treated_as_a_shared_value():
+    st = {"signers": [{"name": "A", "email": ""}, {"name": "B"}]}
+    assert taken_email(st) == set()

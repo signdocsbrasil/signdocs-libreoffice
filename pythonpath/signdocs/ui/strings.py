@@ -168,6 +168,11 @@ _STRINGS = {
         "en": "This CPF/CNPJ is already in the list.",
         "es": "Este CPF/CNPJ ya está en la lista.",
     },
+    "duplicate_email": {
+        "pt": "Este e-mail já está na lista.",
+        "en": "This e-mail is already in the list.",
+        "es": "Este correo ya está en la lista.",
+    },
     "move_up": {"pt": "Subir", "en": "Up", "es": "Subir"},
     "move_down": {"pt": "Descer", "en": "Down", "es": "Bajar"},
     "recent": {"pt": "Recentes", "en": "Recent", "es": "Recientes"},
