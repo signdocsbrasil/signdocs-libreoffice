@@ -159,6 +159,10 @@ _STRINGS = {
         "en": "Certificates require sequential order.",
         "es": "El certificado exige orden secuencial.",
     },
+    # The list order is the signing order, so these are not cosmetic on a
+    # sequential send: they decide who is asked first.
+    "move_up": {"pt": "Subir", "en": "Up", "es": "Subir"},
+    "move_down": {"pt": "Descer", "en": "Down", "es": "Bajar"},
     "recent": {"pt": "Recentes", "en": "Recent", "es": "Recientes"},
     "recent_title": {"pt": "Signatários recentes", "en": "Recent signers",
                      "es": "Firmantes recientes"},

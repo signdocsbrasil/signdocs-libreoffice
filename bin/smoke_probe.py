@@ -352,6 +352,26 @@ def main():
                                dict(state, signers=two, profile="digital_certificate"))
         check("order is LOCKED for a certificate profile",
               built_enabled.get((s("send_title"), "order")) is False)
+
+        # -- reordering signers --------------------------------------------
+        # The list order becomes signerIndex, so on a sequential send it
+        # decides who is asked first. Before this the only fix for a wrong
+        # order was deleting everybody below the mistake and retyping them.
+        check("the signer list offers move up/down",
+              "up" in built.get(s("send_title"), [])
+              and "down" in built.get(s("send_title"), []))
+        # Nothing selected on a freshly built dialog, so neither can act --
+        # and a button that does nothing when clicked is the thing being
+        # avoided here.
+        check("move buttons start disabled with no selection",
+              built_enabled.get((s("send_title"), "up")) is False
+              and built_enabled.get((s("send_title"), "down")) is False)
+
+        ui_dialogs.send_dialog(ctx, None, store, s,
+                               dict(state, signers=[two[0]], profile="click_only"))
+        check("move buttons stay disabled with a single signer",
+              built_enabled.get((s("send_title"), "up")) is False
+              and built_enabled.get((s("send_title"), "down")) is False)
         check("and the send is switched to sequential rather than left parallel",
               ui_dialogs.ORDER_KEYS.index("SEQUENTIAL") >= 0
               and "order_note" in built.get(s("send_title"), []))

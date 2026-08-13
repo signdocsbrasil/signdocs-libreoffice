@@ -558,6 +558,14 @@ def send_dialog(ctx, frame, store, s, state):
                   s("edit"), lambda: _edit_signer(ctx, frame, s, dialog, state))
     dialog.button("remove", MARGIN + 2 * (BUTTON_W + 4), y, BUTTON_W, BUTTON_H,
                   s("remove"), lambda: _remove_signer(dialog, state, s))
+    # The list order IS the signing order — it becomes signerIndex, 1-based.
+    # Getting it wrong on a sequential send means the wrong person is asked
+    # first, and the only fix without these was to remove everybody below the
+    # mistake and retype them, CPFs included.
+    dialog.button("up", MARGIN + 3 * (BUTTON_W + 4), y, 44, BUTTON_H,
+                  s("move_up"), lambda: _move_signer(dialog, state, s, -1))
+    dialog.button("down", MARGIN + 3 * (BUTTON_W + 4) + 48, y, 44, BUTTON_H,
+                  s("move_down"), lambda: _move_signer(dialog, state, s, 1))
 
     y = height - BUTTON_H - MARGIN
     # Same wording as the menu entry, so the two are recognisably the same
@@ -598,7 +606,9 @@ def send_dialog(ctx, frame, store, s, state):
                   s("review"), go_review)
 
     dialog.on_change("profile", lambda: _sync_order(dialog, state, s))
+    dialog.on_change("signers", lambda: _sync_move_buttons(dialog, state))
     _sync_order(dialog, state, s)
+    _sync_move_buttons(dialog, state)
     return dialog.show(parent_window(frame))
 
 
@@ -641,6 +651,7 @@ def _refresh_signers(dialog, state, s):
         keep_selection=False,
     )
     _sync_order(dialog, state, s)
+    _sync_move_buttons(dialog, state)
 
 
 def _add_signer(ctx, frame, s, dialog, state):
@@ -673,6 +684,35 @@ def _remove_signer(dialog, state, s):
     if 0 <= index < len(state["signers"]):
         del state["signers"][index]
         _refresh_signers(dialog, state, s)
+
+
+def _move_signer(dialog, state, s, delta):
+    """
+    Move the selected signer one place up or down.
+
+    The selection follows the person, not the position: after moving somebody
+    down, the highlight stays on them, so a second click moves them again.
+    Leaving it on the index would silently start moving whoever swapped into
+    that row instead — which is how a reorder turns into a shuffle.
+    """
+    signers = state["signers"]
+    index = dialog.selected_index("signers")
+    target = index + delta
+    if index < 0 or target < 0 or target >= len(signers):
+        return
+
+    signers[index], signers[target] = signers[target], signers[index]
+    _refresh_signers(dialog, state, s)
+    dialog.select("signers", target)
+    _sync_move_buttons(dialog, state)
+
+
+def _sync_move_buttons(dialog, state):
+    """Grey out a move that has nowhere to go, rather than doing nothing."""
+    index = dialog.selected_index("signers")
+    count = len(state["signers"])
+    dialog.enable("up", count > 1 and index > 0)
+    dialog.enable("down", count > 1 and 0 <= index < count - 1)
 
 
 # ----------------------------------------------------------- review dialog
