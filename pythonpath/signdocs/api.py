@@ -249,6 +249,13 @@ def _send_envelope(store, document, signers, profile, order, key, stage):
             # arrives without its secret arrives as None.
             "url": entry.get("url"),
             "inviteSent": bool(entry.get("inviteSent")),
+            # A sequential envelope invites one signer at a time. Without this
+            # the row falls through to "sem convite — envie o link você mesmo",
+            # which is wrong twice: the invitation IS coming, and on a
+            # click-only send the link was deliberately withheld from the
+            # sender so it could not be hand-delivered in the first place.
+            "inviteDeferred": bool(entry.get("inviteDeferred")),
+            "invitedAfterSigner": entry.get("invitedAfterSigner"),
         })
 
     return {

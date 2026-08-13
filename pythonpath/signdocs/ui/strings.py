@@ -144,6 +144,17 @@ _STRINGS = {
     "invite_not_sent": {"pt": "sem convite — envie o link você mesmo",
                         "en": "no invitation — send the link yourself",
                         "es": "sin invitación — envía el enlace tú mismo"},
+    # Sequential sends invite one signer at a time, so most rows start here.
+    # Without a wording of its own the row read "sem convite — envie o link
+    # você mesmo", which is advice the sender cannot follow: on a click-only
+    # send the link is withheld from them precisely so it cannot be passed
+    # along by hand.
+    "invite_after": {"pt": "convite após o signatário %d assinar",
+                     "en": "invitation after signer %d signs",
+                     "es": "invitación después de que firme el firmante %d"},
+    "invite_later": {"pt": "convite enviado na sua vez",
+                     "en": "invitation sent when their turn comes",
+                     "es": "invitación enviada cuando llegue su turno"},
     # The app's own wording, verbatim, so the same rule reads the same wherever
     # somebody meets it. A subuser signs against the master's row, never one of
     # their own, so their address is not a signatory identity.

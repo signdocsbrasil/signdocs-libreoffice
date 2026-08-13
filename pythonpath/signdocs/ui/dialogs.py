@@ -957,7 +957,16 @@ def result_dialog(ctx, frame, s, sent, account_email=""):
 
     entries = []
     for link in links:
-        note = s("invite_sent") if link.get("inviteSent") else s("invite_not_sent")
+        if link.get("inviteSent"):
+            note = s("invite_sent")
+        elif link.get("inviteDeferred"):
+            # Name the signer being waited on when the server said who, since
+            # "after signer 3" is actionable and "later" is not.
+            after = link.get("invitedAfterSigner")
+            note = (s("invite_after") % after) if isinstance(after, int) \
+                else s("invite_later")
+        else:
+            note = s("invite_not_sent")
         # A withheld link has no url at all. Saying so beats an em dash that
         # reads like something went wrong.
         target = link.get("url") or s("link_by_email")

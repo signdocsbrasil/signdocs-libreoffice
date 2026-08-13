@@ -21,9 +21,12 @@ from signdocs import api  # noqa: E402
 
 ORDER_DEPENDENT_PROFILES = ("digital_certificate",)
 
+# Moved out of the LibreOffice handler once the same list started deciding
+# three things — which envelopes are forced sequential, who may sign now, and
+# who gets invited next — across five channels that each held a private copy.
 SERVER = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "external-api", "src", "handlers", "libreoffice", "create-envelope.ts")
+    "external-api", "src", "services", "envelope-order.ts")
 
 
 def test_the_client_forces_the_same_profiles_the_server_does():
