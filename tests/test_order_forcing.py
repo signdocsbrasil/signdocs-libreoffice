@@ -82,3 +82,46 @@ def test_the_signer_cap_stays_within_what_one_request_can_finish():
     # the send asynchronous puts users back on the 504-but-it-worked path.
     from signdocs import api
     assert api.MAX_SIGNERS <= 30
+
+
+# ---------------------------------------------- import plan gate (client)
+def plan_allows_import(state):
+    """Mirror of dialogs._plan_allows_import."""
+    from signdocs.ui import strings
+    user = ((state or {}).get("quota") or {}).get("user") or {}
+    plan = (user.get("plan") or "").strip()
+    if not plan:
+        return True
+    return strings.is_advanced_plan(plan)
+
+
+def quota_with(plan):
+    return {"quota": {"user": {"email": "a@b.com", "plan": plan}}}
+
+
+def test_avancado_may_import():
+    assert plan_allows_import(quota_with("Avançado 80")) is True
+    assert plan_allows_import(quota_with("AVANCADO 200")) is True
+
+
+def test_lesser_plans_are_asked_to_upgrade_before_the_picker_opens():
+    # The whole point: no file chooser for an account that cannot use it.
+    assert plan_allows_import(quota_with("Iniciante 20")) is False
+    assert plan_allows_import(quota_with("Gratuito")) is False
+
+
+def test_an_unknown_plan_does_not_block():
+    # init_session is fail-soft, so a lookup that never happened must not deny
+    # a feature the account may well have. The server still answers 402.
+    assert plan_allows_import(None) is True
+    assert plan_allows_import({}) is True
+    assert plan_allows_import({"quota": None}) is True
+    assert plan_allows_import(quota_with("")) is True
+
+
+def test_the_client_matches_the_server_rule():
+    # hasAdvancedPlan strips accents, upper-cases and matches the prefix.
+    from signdocs.ui import strings
+    assert strings.is_advanced_plan("avançado") is True
+    assert strings.is_advanced_plan("Avancado 80") is True
+    assert strings.is_advanced_plan("Enterprise") is False

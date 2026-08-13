@@ -736,6 +736,20 @@ def _remove_signer(dialog, state, s):
         _refresh_signers(dialog, state, s)
 
 
+def _plan_allows_import(state):
+    """
+    Whether the account's plan, as last read, includes bulk import.
+
+    Unknown means yes: `init_session` fails soft, and a plan we never managed
+    to read is not grounds for refusing a feature the user may well have.
+    """
+    user = ((state or {}).get("quota") or {}).get("user") or {}
+    plan = (user.get("plan") or "").strip()
+    if not plan:
+        return True
+    return strings.is_advanced_plan(plan)
+
+
 def _import_signers(ctx, frame, store, s, dialog, state):
     """
     Fill the signer list from a spreadsheet.
@@ -748,6 +762,22 @@ def _import_signers(ctx, frame, store, s, dialog, state):
     Rows are ADDED to whatever is already listed rather than replacing it, so
     an import cannot silently discard names already typed.
     """
+    # Check the plan BEFORE asking for a file. Making somebody choose a
+    # spreadsheet and only then telling them their plan does not include the
+    # feature wastes the one action they took.
+    #
+    # An unknown plan does NOT block: init-session is fail-soft, and a lookup
+    # that never happened must not deny a feature the account has. The server
+    # is the authority either way — it answers 402 — so the cost of guessing
+    # wrong here is a wasted round trip, not a wrongly-granted feature.
+    if not _plan_allows_import(state):
+        # Same plan picker the exhausted-quota path uses, rather than a dead
+        # end: the answer to "your plan does not include this" is the page
+        # where that changes.
+        if msgbox.confirm(ctx, frame, s("import_needs_plan"), s("app")):
+            run_upgrade(ctx, frame, store, s, config.current_stage(store))
+        return
+
     path = pick_file(ctx, s("import_title"),
                      [(s("import_filter"), "*.csv;*.xlsx;*.txt")])
     if not path:

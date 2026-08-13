@@ -183,6 +183,16 @@ _STRINGS = {
         "es": "Este correo ya está en la lista.",
     },
     "import_signers": {"pt": "Importar", "en": "Import", "es": "Importar"},
+    # Asked before the file picker, so nobody chooses a spreadsheet only to be
+    # told afterwards that their plan does not include the feature.
+    "import_needs_plan": {
+        "pt": "A importação de lista de signatários faz parte do plano "
+              "Avançado.\n\nVer os planos?",
+        "en": "Importing a signer list is part of the Avançado plan.\n\n"
+              "See the plans?",
+        "es": "La importación de lista de firmantes es parte del plan "
+              "Avançado.\n\n¿Ver los planes?",
+    },
     "import_title": {"pt": "Importar lista de signatários",
                      "en": "Import signer list",
                      "es": "Importar lista de firmantes"},
@@ -524,6 +534,22 @@ def api_status(s, raw):
         return ""
     key = API_STATUS.get(str(raw).strip().upper())
     return s(key) if key else str(raw)
+
+
+def is_advanced_plan(plan):
+    """
+    Whether a plan name is an Avançado tier.
+
+    Mirrors `hasAdvancedPlan` in external-api/src/services/channel-quota-client.ts
+    — strip accents, upper-case, match the prefix — so "Avançado 80" and
+    "AVANCADO 200" both count and the two sides cannot disagree about the same
+    string. Display only: the server decides, this just avoids asking for a
+    file the account cannot use.
+    """
+    import unicodedata
+    normalised = unicodedata.normalize("NFD", plan or "")
+    stripped = "".join(c for c in normalised if unicodedata.category(c) != "Mn")
+    return stripped.upper().startswith("AVANCADO")
 
 
 def signer_line(s, signer, is_you=False):
