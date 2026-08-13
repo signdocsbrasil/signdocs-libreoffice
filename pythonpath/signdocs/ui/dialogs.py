@@ -160,7 +160,8 @@ def _recent_line(signer):
     return " — ".join(parts)
 
 
-def signer_dialog(ctx, frame, s, signer=None, blocked_email="", recents=()):
+def signer_dialog(ctx, frame, s, signer=None, blocked_email="", recents=(),
+                  taken_fiscal=()):
     """Add or edit one signer. Returns the dict, or None if cancelled."""
     width = 220
     dialog = Dialog(ctx, s("signer_title"), width, 88)
@@ -198,6 +199,13 @@ def signer_dialog(ctx, frame, s, signer=None, blocked_email="", recents=()):
         if classified.kind is None or not classified.valid:
             dialog.model.getByName("err").Label = s("fiscal")
             return
+        # One CPF cannot be two signatories: it is what the evidence
+        # attributes the signature to, so a repeat is one person holding two
+        # links. Compared on digits, since the same number can be typed with
+        # or without punctuation. The server refuses it too.
+        if validators.only_digits(fiscal) in taken_fiscal:
+            dialog.model.getByName("err").Label = s("duplicate_fiscal")
+            return
         dialog.finish({"name": name, "email": email, "fiscal": fiscal})
 
     def pick_recent():
@@ -221,6 +229,20 @@ def signer_dialog(ctx, frame, s, signer=None, blocked_email="", recents=()):
     dialog.button("ok", width - BUTTON_W - MARGIN, 68, BUTTON_W, BUTTON_H,
                   s("ok"), accept)
     return dialog.show(parent_window(frame))
+
+
+def _taken_fiscal(state, skip=None):
+    """
+    Fiscal numbers already spoken for, as digits.
+
+    `skip` is the row being edited: re-saving somebody without changing their
+    CPF must not collide with themselves.
+    """
+    return {
+        validators.only_digits(sg.get("fiscal"))
+        for i, sg in enumerate(state.get("signers") or [])
+        if i != skip and validators.only_digits(sg.get("fiscal"))
+    }
 
 
 def _signer_line(index, signer):
@@ -661,7 +683,8 @@ def _add_signer(ctx, frame, s, dialog, state):
         return
     signer = signer_dialog(ctx, frame, s,
                            blocked_email=_blocked_signer_email(state),
-                           recents=state.get("recents") or ())
+                           recents=state.get("recents") or (),
+                           taken_fiscal=_taken_fiscal(state))
     if signer:
         state["signers"].append(signer)
         _refresh_signers(dialog, state, s)
@@ -673,7 +696,8 @@ def _edit_signer(ctx, frame, s, dialog, state):
         return
     signer = signer_dialog(ctx, frame, s, state["signers"][index],
                            blocked_email=_blocked_signer_email(state),
-                           recents=state.get("recents") or ())
+                           recents=state.get("recents") or (),
+                           taken_fiscal=_taken_fiscal(state, skip=index))
     if signer:
         state["signers"][index] = signer
         _refresh_signers(dialog, state, s)

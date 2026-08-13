@@ -388,6 +388,17 @@ def main():
         check("Recentes appears once somebody has been sent to",
               "recent" in built.get(s("signer_title"), []))
 
+        # -- one CPF cannot be two signatories -----------------------------
+        # The fiscal number is what the evidence attributes the signature to,
+        # so a repeat is one person holding two links.
+        check("a duplicate CPF is refused before it reaches the wire",
+              ui_dialogs._taken_fiscal(
+                  {"signers": [{"fiscal": "751.820.411-87"}]})
+              == {"75182041187"})
+        check("and editing a signer does not collide with themselves",
+              ui_dialogs._taken_fiscal(
+                  {"signers": [{"fiscal": "52998224725"}]}, skip=0) == set())
+
         line = ui_dialogs._recent_line(
             {"name": "Ana", "email": "ana@ex.com.br", "fiscal": "52998224725"})
         check("a recent signer shows name, e-mail and a punctuated CPF",

@@ -161,6 +161,13 @@ _STRINGS = {
     },
     # The list order is the signing order, so these are not cosmetic on a
     # sequential send: they decide who is asked first.
+    # The fiscal number is what the evidence attributes the signature to, so
+    # one CPF twice is one person holding two links.
+    "duplicate_fiscal": {
+        "pt": "Este CPF/CNPJ já está na lista.",
+        "en": "This CPF/CNPJ is already in the list.",
+        "es": "Este CPF/CNPJ ya está en la lista.",
+    },
     "move_up": {"pt": "Subir", "en": "Up", "es": "Subir"},
     "move_down": {"pt": "Descer", "en": "Down", "es": "Bajar"},
     "recent": {"pt": "Recentes", "en": "Recent", "es": "Recientes"},
