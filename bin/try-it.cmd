@@ -14,12 +14,6 @@ rem ===================================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-echo.
-echo   SignDocs Brasil - extensao para LibreOffice
-echo   Ambiente: HOMOLOGACAO (hml)
-echo   Abrindo:  %LABEL%
-echo.
-
 rem --- 0. qual modulo abrir -----------------------------------------
 rem  Os quatro modulos sao caminhos diferentes: o Addons.xcu cita os quatro
 rem  no Context, e o intake.py mapeia cada um ao seu proprio filtro de
@@ -36,6 +30,14 @@ if /i "%~1"=="--impress" set "MODULES=--impress" & set "LABEL=Impress"
 if /i "%~1"=="--draw"    set "MODULES=--draw"    & set "LABEL=Draw"
 if /i "%~1"=="--writer"  set "MODULES=--writer"  & set "LABEL=Writer"
 if /i "%~1"=="--all"     set "MODULES=--writer --calc --impress --draw" & set "LABEL=Writer, Calc, Impress e Draw"
+
+rem  Impresso depois do bloco acima, e nao antes: LABEL so existe a partir
+rem  daqui, e um echo mais cedo saia como "Abrindo:" sem nada depois.
+echo.
+echo   SignDocs Brasil - extensao para LibreOffice
+echo   Ambiente: HOMOLOGACAO (hml)
+echo   Abrindo:  %LABEL%
+echo.
 
 rem --- 1. localizar o LibreOffice ------------------------------------
 rem  unopkg.COM e nao unopkg.EXE: no Windows o .exe retorna na hora e o
@@ -109,7 +111,7 @@ echo   OK.
 
 rem --- 6. abrir -------------------------------------------------------
 echo.
-echo   Abrindo o Writer.
+echo   Abrindo: %LABEL%
 echo.
 echo     Menu:    Ferramentas ^> Suplementos ^> SignDocs Brasil
 echo     Barra:   Exibir ^> Barras de ferramentas ^> Add-On 1
