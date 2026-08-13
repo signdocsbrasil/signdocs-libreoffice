@@ -152,6 +152,22 @@ _STRINGS = {
         "en": "Sub-users cannot be signatories.",
         "es": "Los subusuarios no pueden ser firmantes.",
     },
+    # Why the order selector is locked. The A1/A3 path loads the previous
+    # signer's output, so there is an order whether or not anybody picks one.
+    "order_forced_cert": {
+        "pt": "Certificado exige ordem sequencial.",
+        "en": "Certificates require sequential order.",
+        "es": "El certificado exige orden secuencial.",
+    },
+    "recent": {"pt": "Recentes", "en": "Recent", "es": "Recientes"},
+    "recent_title": {"pt": "Signatários recentes", "en": "Recent signers",
+                     "es": "Firmantes recientes"},
+    "no_recent": {
+        "pt": "Ninguém ainda. Os signatários dos seus envios aparecem aqui.",
+        "en": "Nobody yet. Signers from your sends appear here.",
+        "es": "Nadie todavía. Los firmantes de tus envíos aparecen aquí.",
+    },
+    "use": {"pt": "Usar", "en": "Use", "es": "Usar"},
     "sign_now": {"pt": "Assinar agora", "en": "Sign now", "es": "Firmar ahora"},
     # Marks the reader's own row in the signer list, which is also the row the
     # Assinar agora button acts on.

@@ -252,3 +252,51 @@ def test_a_minted_signing_link_never_reaches_the_profile(tmp_path):
     assert "ss_secret_" not in raw
     assert "cs=" not in raw
     assert "clientSecret" not in raw
+
+
+# ------------------------------------------------------- recent signers
+def test_recent_signers_are_unique_and_newest_first(history):
+    history.add(entry("e1", signers=[{"name": "Ana", "email": "ana@x.com",
+                                      "fiscal": "52998224725"}]))
+    history.add(entry("e2", signers=[{"name": "Bruno", "email": "bruno@x.com"},
+                                     {"name": "Ana", "email": "ana@x.com"}]))
+
+    people = history.recent_signers()
+
+    assert [p["email"] for p in people] == ["bruno@x.com", "ana@x.com"]
+
+
+def test_recent_signers_match_on_address_regardless_of_case(history):
+    history.add(entry("e1", signers=[{"name": "Ana", "email": "ana@x.com"}]))
+    history.add(entry("e2", signers=[{"name": "Ana Maria", "email": "ANA@X.COM"}]))
+
+    people = history.recent_signers()
+
+    # One person, and the newer spelling of their name wins.
+    assert len(people) == 1
+    assert people[0]["name"] == "Ana Maria"
+
+
+def test_recent_signers_carry_the_fiscal_number(history):
+    # The whole point: a CPF retyped from memory is the one field where a slip
+    # attributes the signature to somebody else and still validates.
+    history.add(entry("e1", signers=[{"name": "Ana", "email": "ana@x.com",
+                                      "fiscal": "52998224725"}]))
+    assert history.recent_signers()[0]["fiscal"] == "52998224725"
+
+
+def test_recent_signers_is_bounded(history):
+    for i in range(40):
+        history.add(entry("e%d" % i,
+                          signers=[{"name": "P%d" % i, "email": "p%d@x.com" % i}]))
+    assert len(history.recent_signers()) <= 12
+
+
+def test_recent_signers_skips_rows_with_no_address(history):
+    history.add(entry("e1", signers=[{"name": "Sem email"},
+                                     {"name": "Ana", "email": "ana@x.com"}]))
+    assert [p["email"] for p in history.recent_signers()] == ["ana@x.com"]
+
+
+def test_recent_signers_is_empty_on_a_fresh_profile(history):
+    assert history.recent_signers() == []

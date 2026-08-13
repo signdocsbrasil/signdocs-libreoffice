@@ -20,6 +20,10 @@ from signdocs import config
 #: Enough to cover "what did I just send", far short of unbounded growth.
 MAX = 25
 
+#: How many distinct people the signer picker offers. A short list people
+#: scan; a long one they scroll past and type the address anyway.
+RECENT_SIGNERS = 12
+
 PENDING = "pending"
 CANCELLED = "cancelled"
 COMPLETED = "completed"
@@ -98,6 +102,37 @@ class History(object):
         })
         self._write(entries)
         return self.list()
+
+    def recent_signers(self, limit=RECENT_SIGNERS):
+        """
+        People this account has sent to, most recent first, without repeats.
+
+        Derived from the sends already recorded rather than kept in a second
+        store. That is the whole point: the signer whitelist in `add()` is the
+        one place deciding what about a person reaches disk, and a parallel
+        "recent signers" cache would be a second one, free to drift from it —
+        and the obvious drift is the one that starts remembering more.
+
+        Bounded twice over: by MAX sends kept, and by `limit` here. So this is
+        a convenience for regulars, not an address book, and it forgets in the
+        same order the history does.
+        """
+        seen = set()
+        out = []
+        for entry in self.list():
+            for signer in entry.get("signers") or []:
+                email = (signer.get("email") or "").strip().lower()
+                if not email or email in seen:
+                    continue
+                seen.add(email)
+                out.append({
+                    "name": signer.get("name"),
+                    "email": signer.get("email"),
+                    "fiscal": signer.get("fiscal"),
+                })
+                if len(out) >= limit:
+                    return out
+        return out
 
     def set_status(self, entry_id, status):
         """

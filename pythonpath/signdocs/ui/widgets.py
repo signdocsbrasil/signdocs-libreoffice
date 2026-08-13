@@ -150,6 +150,10 @@ class Dialog(object):
             index = previous if 0 <= previous < len(items) else 0
             control.SelectedItems = (index,)
 
+    def select(self, name, index):
+        """Move a listbox to one of its entries."""
+        self.model.getByName(name).SelectedItems = (index,)
+
     def get_state(self, name):
         """Checkbox state as a bool. UNO models it as 0/1/2 (2 = tristate)."""
         return bool(getattr(self.model.getByName(name), "State", 0))

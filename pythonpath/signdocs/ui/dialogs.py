@@ -115,7 +115,52 @@ def _blocked_signer_email(state):
     return user.get("email", "") if user.get("isSubuser") else ""
 
 
-def signer_dialog(ctx, frame, s, signer=None, blocked_email=""):
+def recent_signers_dialog(ctx, frame, s, recents):
+    """
+    Pick somebody already sent to. Returns the signer dict, or None.
+
+    Worth the extra window because the alternative is retyping a CPF, and a
+    CPF typed from memory is the one field here where a slip is not merely
+    undeliverable — it attributes the signature to a different person, and the
+    validator cannot tell, because the wrong number checks out too.
+    """
+    width = 300
+    height = 150
+    dialog = Dialog(ctx, s("recent_title"), width, height)
+    inner = width - 2 * MARGIN
+
+    dialog.listctl("people", MARGIN, MARGIN, inner, height - 46,
+                   [_recent_line(r) for r in recents])
+    if recents:
+        dialog.model.getByName("people").SelectedItems = (0,)
+
+    def use():
+        index = dialog.selected_index("people")
+        if 0 <= index < len(recents):
+            # A copy: the picker seeds the form, and editing the name there
+            # must not rewrite the history row it came from.
+            dialog.finish(dict(recents[index]))
+
+    y = height - BUTTON_H - MARGIN
+    dialog.button("cancel", width - 2 * BUTTON_W - 2 * MARGIN, y, BUTTON_W,
+                  BUTTON_H, s("cancel"), lambda: dialog.finish(None))
+    dialog.button("use", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
+                  s("use"), use)
+    return dialog.show(parent_window(frame))
+
+
+def _recent_line(signer):
+    parts = [(signer.get("name") or "").strip() or (signer.get("email") or "")]
+    email = (signer.get("email") or "").strip()
+    if email and email != parts[0]:
+        parts.append(email)
+    fiscal = validators.format_cpf_cnpj(signer.get("fiscal"))
+    if fiscal:
+        parts.append(fiscal)
+    return " — ".join(parts)
+
+
+def signer_dialog(ctx, frame, s, signer=None, blocked_email="", recents=()):
     """Add or edit one signer. Returns the dict, or None if cancelled."""
     width = 220
     dialog = Dialog(ctx, s("signer_title"), width, 88)
@@ -154,6 +199,22 @@ def signer_dialog(ctx, frame, s, signer=None, blocked_email=""):
             dialog.model.getByName("err").Label = s("fiscal")
             return
         dialog.finish({"name": name, "email": email, "fiscal": fiscal})
+
+    def pick_recent():
+        chosen = recent_signers_dialog(ctx, frame, s, list(recents))
+        if not chosen:
+            return
+        # Seeds the fields rather than finishing the dialog: the CPF is the
+        # value worth not retyping, but the person may well be here to change
+        # the name, and they still have to pass the same validation.
+        dialog.set("name", chosen.get("name") or "")
+        dialog.set("email", chosen.get("email") or "")
+        dialog.set("fiscal", chosen.get("fiscal") or "")
+        dialog.model.getByName("err").Label = ""
+
+    if recents:
+        dialog.button("recent", MARGIN, 68, BUTTON_W + 12, BUTTON_H,
+                      s("recent"), pick_recent)
 
     dialog.button("cancel", width - 2 * BUTTON_W - 2 * MARGIN, 68, BUTTON_W,
                   BUTTON_H, s("cancel"), lambda: dialog.finish(None))
@@ -482,7 +543,9 @@ def send_dialog(ctx, frame, store, s, state):
                    [s("parallel"), s("sequential")],
                    ORDER_KEYS.index(state.get("order", "PARALLEL")))
 
-    y += ROW + 6
+    dialog.label("order_note", 80, y + ROW, inner - 72, 10, "")
+
+    y += ROW + 14
     dialog.label("l3", MARGIN, y, inner, 10, s("signers"))
     y += 12
     dialog.listctl("signers", MARGIN, y, inner, 58,
@@ -494,7 +557,7 @@ def send_dialog(ctx, frame, store, s, state):
     dialog.button("edit", MARGIN + BUTTON_W + 4, y, BUTTON_W, BUTTON_H,
                   s("edit"), lambda: _edit_signer(ctx, frame, s, dialog, state))
     dialog.button("remove", MARGIN + 2 * (BUTTON_W + 4), y, BUTTON_W, BUTTON_H,
-                  s("remove"), lambda: _remove_signer(dialog, state))
+                  s("remove"), lambda: _remove_signer(dialog, state, s))
 
     y = height - BUTTON_H - MARGIN
     # Same wording as the menu entry, so the two are recognisably the same
@@ -534,18 +597,50 @@ def send_dialog(ctx, frame, store, s, state):
     dialog.button("review", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
                   s("review"), go_review)
 
-    # The order selector is meaningless with a single signer.
-    dialog.enable("order", len(state["signers"]) > 1)
+    dialog.on_change("profile", lambda: _sync_order(dialog, state, s))
+    _sync_order(dialog, state, s)
     return dialog.show(parent_window(frame))
 
 
-def _refresh_signers(dialog, state):
+#: Profiles the server refuses to run in parallel. The A1/A3 path loads the
+#: previous signer's output, so there is an order whether or not the user picks
+#: one — `create-envelope.ts` overrides PARALLEL for these and reports
+#: `signingModeForced`.
+ORDER_DEPENDENT_PROFILES = ("digital_certificate",)
+
+
+def _sync_order(dialog, state, s):
+    """
+    Keep the order selector honest about what the server will actually do.
+
+    Offering "Paralela" next to a certificate profile is offering a choice that
+    does not exist: the send goes out sequential regardless, and the user finds
+    out afterwards from a note on the result screen. Better to show the real
+    answer while they can still see why.
+
+    Also meaningless with a single signer, which is the older reason this
+    control gets disabled.
+    """
+    profile = PROFILE_KEYS[max(0, dialog.selected_index("profile"))]
+    forced = profile in ORDER_DEPENDENT_PROFILES
+
+    if forced:
+        state["order"] = "SEQUENTIAL"
+        dialog.select("order", ORDER_KEYS.index("SEQUENTIAL"))
+
+    dialog.enable("order", not forced and len(state["signers"]) > 1)
+    # Say why it is greyed out. A disabled control with no explanation reads as
+    # a bug, and this one has a real reason worth knowing.
+    dialog.set_label("order_note", s("order_forced_cert") if forced else "")
+
+
+def _refresh_signers(dialog, state, s):
     dialog.set_items(
         "signers",
         [_signer_line(i, sg) for i, sg in enumerate(state["signers"])],
         keep_selection=False,
     )
-    dialog.enable("order", len(state["signers"]) > 1)
+    _sync_order(dialog, state, s)
 
 
 def _add_signer(ctx, frame, s, dialog, state):
@@ -553,10 +648,12 @@ def _add_signer(ctx, frame, s, dialog, state):
         msgbox.error(ctx, frame,
                      s("max_signers") % api.MAX_SIGNERS, s("app"))
         return
-    signer = signer_dialog(ctx, frame, s, blocked_email=_blocked_signer_email(state))
+    signer = signer_dialog(ctx, frame, s,
+                           blocked_email=_blocked_signer_email(state),
+                           recents=state.get("recents") or ())
     if signer:
         state["signers"].append(signer)
-        _refresh_signers(dialog, state)
+        _refresh_signers(dialog, state, s)
 
 
 def _edit_signer(ctx, frame, s, dialog, state):
@@ -564,17 +661,18 @@ def _edit_signer(ctx, frame, s, dialog, state):
     if index < 0 or index >= len(state["signers"]):
         return
     signer = signer_dialog(ctx, frame, s, state["signers"][index],
-                           blocked_email=_blocked_signer_email(state))
+                           blocked_email=_blocked_signer_email(state),
+                           recents=state.get("recents") or ())
     if signer:
         state["signers"][index] = signer
-        _refresh_signers(dialog, state)
+        _refresh_signers(dialog, state, s)
 
 
-def _remove_signer(dialog, state):
+def _remove_signer(dialog, state, s):
     index = dialog.selected_index("signers")
     if 0 <= index < len(state["signers"]):
         del state["signers"][index]
-        _refresh_signers(dialog, state)
+        _refresh_signers(dialog, state, s)
 
 
 # ----------------------------------------------------------- review dialog
@@ -973,6 +1071,15 @@ def run_send(ctx, frame, store):
     info = busy(ctx, parent_window(frame), s("busy_status"),
                 lambda: api.init_session(store, stage=stage))
     state["quota"] = info.value if info is not None and info.ok else None
+
+    # Read once per send rather than per signer: it comes off the local history
+    # and nothing writes to that until this send finishes.
+    try:
+        state["recents"] = history.History(store, stage).recent_signers()
+    except Exception:
+        # A convenience. If the history is unreadable the picker simply does
+        # not appear, which is exactly what happens on a first run anyway.
+        state["recents"] = []
 
     # One key for the whole attempt, reused if the user retries after a
     # failure: quota is a single pool and is not refunded on cancel, so a

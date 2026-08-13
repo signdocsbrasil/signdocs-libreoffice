@@ -337,6 +337,43 @@ def main():
         check("signer dialog builds",
               "fiscal" in built.get(s("signer_title"), []))
 
+        # -- a certificate cannot sign in parallel -------------------------
+        # The server overrides PARALLEL for DIGITAL_CERTIFICATE anyway, so
+        # offering the choice means the user picks something that is silently
+        # changed. Locked here, with the reason on screen.
+        two = [{"name": "Ana", "email": "ana@ex.com.br", "fiscal": "52998224725"},
+               {"name": "Bruno", "email": "bruno@ex.com.br", "fiscal": "12345678909"}]
+        ui_dialogs.send_dialog(ctx, None, store, s,
+                               dict(state, signers=two, profile="click_only"))
+        check("order stays selectable for click-only with two signers",
+              built_enabled.get((s("send_title"), "order")) is True)
+
+        ui_dialogs.send_dialog(ctx, None, store, s,
+                               dict(state, signers=two, profile="digital_certificate"))
+        check("order is LOCKED for a certificate profile",
+              built_enabled.get((s("send_title"), "order")) is False)
+        check("and the send is switched to sequential rather than left parallel",
+              ui_dialogs.ORDER_KEYS.index("SEQUENTIAL") >= 0
+              and "order_note" in built.get(s("send_title"), []))
+
+        # -- recent signers ------------------------------------------------
+        # Offered only when there is somebody to offer; a button opening an
+        # empty list is worse than no button.
+        ui_dialogs.signer_dialog(ctx, None, s, recents=())
+        check("no Recentes button on a fresh profile",
+              "recent" not in built.get(s("signer_title"), []))
+
+        ui_dialogs.signer_dialog(ctx, None, s, recents=[
+            {"name": "Ana", "email": "ana@ex.com.br", "fiscal": "52998224725"}])
+        check("Recentes appears once somebody has been sent to",
+              "recent" in built.get(s("signer_title"), []))
+
+        line = ui_dialogs._recent_line(
+            {"name": "Ana", "email": "ana@ex.com.br", "fiscal": "52998224725"})
+        check("a recent signer shows name, e-mail and a punctuated CPF",
+              "Ana" in line and "ana@ex.com.br" in line
+              and "529.982.247-25" in line, line)
+
         ui_dialogs.result_dialog(ctx, None, s, {
             "kind": "session", "id": "ss_x",
             "links": [{"signerName": "Ana", "url": "https://s/x?cs=y",
