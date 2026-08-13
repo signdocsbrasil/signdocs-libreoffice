@@ -964,12 +964,20 @@ def result_dialog(ctx, frame, s, sent, account_email=""):
         entries.append("%s — %s (%s)" % (link.get("signerName") or "",
                                          target, note))
 
+    # One chain from the bottom up, rather than three independent `height - N`
+    # constants: those disagreed by four units and the list box was drawn over
+    # the top of the expiry line, clipping it to a sliver. Deriving each row
+    # from the one below it cannot drift that way.
+    buttons_y = height - BUTTON_H - MARGIN
+    expiry_y = buttons_y - 14
+    list_top = MARGIN + 12
+    list_h = expiry_y - list_top - 4
+
     dialog.label("t", MARGIN, MARGIN, inner, 10, s("sent_ok"))
-    control = dialog.listctl("links", MARGIN, MARGIN + 12, inner,
-                             height - 72, entries)
+    control = dialog.listctl("links", MARGIN, list_top, inner, list_h, entries)
     # Said again here because this is where the links are actually in front of
     # the user, and a link with no visible deadline invites being sat on.
-    dialog.label("expiry", MARGIN, height - 56, inner, 10,
+    dialog.label("expiry", MARGIN, expiry_y, inner, 10,
                  s("link_expiry") % config.SIGNING_WINDOW_HOURS)
     # Preselect, so the single-signer case — much the commonest — needs no
     # click before the buttons mean anything.
@@ -1023,7 +1031,7 @@ def result_dialog(ctx, frame, s, sent, account_email=""):
         # actually returned.
         dialog.enable("copy", bool(link) and (mine or bool(link.get("url"))))
 
-    y = height - BUTTON_H - MARGIN
+    y = buttons_y
     # "Assinar agora" is longer than any existing caption, hence the wider
     # button; the four still fit inside 320 without crowding Fechar.
     dialog.button("sign", MARGIN, y, BUTTON_W + 24, BUTTON_H, s("sign_now"),

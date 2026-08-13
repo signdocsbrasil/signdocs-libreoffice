@@ -250,6 +250,12 @@ def main():
     # is the failure that matters.
     built_enabled = {}
 
+    # Where each control was placed. A control that exists but is drawn under
+    # another one is invisible to every check that only asks whether it was
+    # built — and invisible to the user too, which is how the expiry line came
+    # to be clipped by the link list for a whole release.
+    built_box = {}
+
     def fake_show(self, parent=None):
         title = self.model.Title
         built[title] = list(self.model.getElementNames())
@@ -264,6 +270,11 @@ def main():
                 built_enabled[(title, name)] = bool(control.Enabled)
             except Exception:
                 built_enabled[(title, name)] = None
+            try:
+                built_box[(title, name)] = (control.PositionY,
+                                            control.PositionY + control.Height)
+            except Exception:
+                built_box[(title, name)] = None
         return None
 
     widgets.Dialog.show = fake_show
@@ -456,6 +467,19 @@ def main():
         })
         check("result dialog builds",
               "links" in built.get(s("result_title"), []))
+
+        # The expiry line is the only place the SENDER is told the links die,
+        # so a few units of overlap with the list box above it is not cosmetic
+        # — it cost the sentence its top half on screen. Assert the stack is
+        # actually in order rather than merely present.
+        rt = s("result_title")
+        list_box = built_box.get((rt, "links"))
+        expiry = built_box.get((rt, "expiry"))
+        buttons = built_box.get((rt, "close"))
+        check("expiry line clears the link list and the buttons",
+              None not in (list_box, expiry, buttons)
+              and list_box[1] <= expiry[0] and expiry[1] <= buttons[0],
+              "list %s expiry %s buttons %s" % (list_box, expiry, buttons))
 
         # -- "Assinar agora" and the two gates around it -------------------
         #
