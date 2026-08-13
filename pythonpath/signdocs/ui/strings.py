@@ -322,6 +322,13 @@ _STRINGS = {
     "quota_line": {"pt": "Plano %s · usados %d/%d · restam %d",
                    "en": "%s plan · used %d/%d · %d left",
                    "es": "Plan %s · usados %d/%d · quedan %d"},
+    # Annual billing releases the whole year at once, so the figure is a
+    # period allowance rather than a monthly one and has to say which.
+    "quota_line_annual": {
+        "pt": "Plano %s (anual) · usados %d/%d no período · restam %d",
+        "en": "%s plan (annual) · used %d/%d this period · %d left",
+        "es": "Plan %s (anual) · usados %d/%d en el período · quedan %d",
+    },
     "quota_line_noplan": {"pt": "Usados %d/%d · restam %d",
                           "en": "Used %d/%d · %d left",
                           "es": "Usados %d/%d · quedan %d"},
@@ -393,6 +400,11 @@ _STRINGS = {
     # "Anual" with no suffix reads as a monthly charge.
     "per_month": {"pt": "/mês", "en": "/month", "es": "/mes"},
     "per_year": {"pt": "/ano", "en": "/year", "es": "/año"},
+    # The whole allowance, not a monthly rate: annual billing hands over the
+    # twelve months at once, which is the reason to choose it.
+    "plan_row_annual": {"pt": "%s — %d documentos no período — %s",
+                        "en": "%s — %d documents for the period — %s",
+                        "es": "%s — %d documentos en el período — %s"},
     "plan_row": {"pt": "%s — %d documentos/mês — %s",
                  "en": "%s — %d documents/month — %s",
                  "es": "%s — %d documentos/mes — %s"},
@@ -609,6 +621,37 @@ def _as_int(value):
     return value
 
 
+def billing_period(plan, limit, source):
+    """
+    "Mensal", "Anual", or None when it cannot be told for certain.
+
+    The server multiplies a paid plan's limit by twelve for annual billing
+    (`getPlanLimit` in channel-quota.ts) but does not send the frequency back,
+    so this reads it off the arithmetic: a limit equal to the number in the
+    plan name is monthly, twelve times it is annual.
+
+    Deliberately conservative. It only ever labels — every number on screen
+    still comes from the server — and anything that does not match exactly
+    returns None so the line stays silent rather than claiming a period the
+    account may not be on. Credits, the shared free pool and any bespoke
+    Enterprise limit all land there.
+    """
+    import re
+    if source != "paid_plan":
+        return None
+    match = re.search(r"(\d+)", plan or "")
+    if not match:
+        return None
+    monthly = int(match.group(1))
+    if monthly <= 0:
+        return None
+    if limit == monthly:
+        return "Mensal"
+    if limit == monthly * 12:
+        return "Anual"
+    return None
+
+
 def quota_line(s, info):
     """
     One line describing the plan and what is left of it, or None.
@@ -651,6 +694,12 @@ def quota_line(s, info):
         used = max(0, limit - remaining)
 
     if plan:
+        period = billing_period(plan, limit, quota.get("source"))
+        if period == "Anual":
+            # Say so: "usados 19/240" with no period reads as a monthly
+            # allowance that has somehow grown, and the whole point of annual
+            # billing is that the year's quota is available from day one.
+            return s("quota_line_annual") % (plan, used, limit, remaining)
         return s("quota_line") % (plan, used, limit, remaining)
     return s("quota_line_noplan") % (used, limit, remaining)
 

@@ -70,3 +70,61 @@ def test_price_formatting_is_pt_br():
 def test_frequencies_are_what_the_server_accepts():
     # create-checkout.ts validates against exactly these two strings.
     assert api.FREQUENCIES == ("Mensal", "Anual")
+
+
+# ------------------------------------------------------- billing period
+from signdocs.ui import strings  # noqa: E402
+
+
+def test_a_monthly_paid_plan_is_recognised():
+    assert strings.billing_period("Iniciante 20", 20, "paid_plan") == "Mensal"
+    assert strings.billing_period("Avançado 200", 200, "paid_plan") == "Mensal"
+
+
+def test_an_annual_paid_plan_is_recognised():
+    # The server multiplies by twelve; this reads that back.
+    assert strings.billing_period("Iniciante 20", 240, "paid_plan") == "Anual"
+    assert strings.billing_period("Avançado 200", 2400, "paid_plan") == "Anual"
+
+
+def test_anything_it_cannot_prove_stays_silent():
+    # A label is not worth claiming a period the account may not be on.
+    assert strings.billing_period("Gratuito", 3, "shared_free_pool") is None
+    assert strings.billing_period("Gratuito", 5, "paid_plan") is None
+    assert strings.billing_period("Enterprise", 500, "paid_plan") is None
+    assert strings.billing_period("Iniciante 20", 137, "paid_plan") is None
+    assert strings.billing_period(None, 20, "paid_plan") is None
+    # Credits are a balance, not a period.
+    assert strings.billing_period("Iniciante 20", 20, "credits") is None
+
+
+def test_the_annual_line_says_the_period_and_the_whole_allowance():
+    s = strings.Strings("pt")
+    info = {"quota": {"allowed": True, "used": 19, "limit": 240,
+                      "remaining": 221, "source": "paid_plan"},
+            "user": {"plan": "Iniciante 20"}}
+    line = strings.quota_line(s, info)
+    assert "anual" in line
+    assert "19/240" in line
+    assert "221" in line
+
+
+def test_a_monthly_line_is_unchanged():
+    s = strings.Strings("pt")
+    info = {"quota": {"allowed": True, "used": 19, "limit": 20,
+                      "remaining": 1, "source": "paid_plan"},
+            "user": {"plan": "Iniciante 20"}}
+    line = strings.quota_line(s, info)
+    assert "anual" not in line
+    assert "19/20" in line
+
+
+def test_the_limit_still_comes_from_the_server_not_the_plan_name():
+    # The standing rule: a planless user's Gratuito record would compute 5,
+    # while the enforced shared pool is 3. The period label must not tempt
+    # anyone into deriving the number instead of rendering it.
+    s = strings.Strings("pt")
+    info = {"quota": {"allowed": True, "used": 1, "limit": 3,
+                      "remaining": 2, "source": "shared_free_pool"},
+            "user": {"plan": "Gratuito"}}
+    assert "1/3" in strings.quota_line(s, info)

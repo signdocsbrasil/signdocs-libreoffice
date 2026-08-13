@@ -336,6 +336,18 @@ def main():
         check("a monthly row quotes the monthly price",
               "19,90" in monthly_row and s("per_month") in monthly_row,
               monthly_row)
+        annual_row_full = s("plan_row_annual") % (
+            probe_api.PLANS[0]["name"], probe_api.PLANS[0]["docs"] * 12,
+            probe_api.format_price(probe_api.PLANS[0]["Anual"]) + s("per_year"))
+        check("an annual row quotes the WHOLE allowance, not a monthly rate",
+              "240" in annual_row_full and "documentos/m" not in annual_row_full,
+              annual_row_full)
+        check("and the usage line says so once the account is on it",
+              "anual" in (ui_strings.quota_line(s, {
+                  "quota": {"allowed": True, "used": 19, "limit": 240,
+                            "remaining": 221, "source": "paid_plan"},
+                  "user": {"plan": "Iniciante 20"}}) or ""))
+
         check("an annual row quotes the ANNUAL price, not the monthly one",
               "178,80" in annual_row and "19,90" not in annual_row,
               annual_row)

@@ -471,11 +471,16 @@ def run_upgrade(ctx, frame, store, s, stage):
         of twelve, and in the direction that looks cheaper.
         """
         frequency = api.FREQUENCIES[max(0, dialog.selected_index("freq"))]
-        suffix = s("per_year") if frequency == "Anual" else s("per_month")
+        annual = frequency == "Anual"
+        suffix = s("per_year") if annual else s("per_month")
+        # Annual releases the whole year at once — the server multiplies the
+        # limit by twelve — so quoting "20 documentos/mês" beside an annual
+        # price describes an allowance the user does not have to ration.
+        row = s("plan_row_annual") if annual else s("plan_row")
         dialog.set_items(
             "plans",
-            [s("plan_row") % (p["name"], p["docs"],
-                              api.format_price(p[frequency]) + suffix)
+            [row % (p["name"], p["docs"] * (12 if annual else 1),
+                    api.format_price(p[frequency]) + suffix)
              for p in api.PLANS],
             keep_selection=True,
         )
