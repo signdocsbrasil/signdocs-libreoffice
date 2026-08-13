@@ -528,12 +528,31 @@ def pending_statuses(store, session_ids=(), envelope_ids=(), stage=None):
 #: What /create-checkout accepts. Kept in step with VALID_PLANS in
 #: external-api/src/handlers/libreoffice/create-checkout.ts — a plan name this
 #: side does not match is a 400, not a wrong price.
+#: Prices in centavos, mirroring `kPlanPrices` in
+#: sign-docs/lib/utils/plan_utils.dart. Integers rather than pre-formatted
+#: strings so the two can be compared: a test asserts they match the app's
+#: table, because a price shown here and charged by Stripe there is the one
+#: kind of drift a user notices immediately.
 PLANS = (
-    {"name": "Iniciante 20", "docs": 20, "monthly": "R$ 19,90"},
-    {"name": "Iniciante 80", "docs": 80, "monthly": "R$ 44,90"},
-    {"name": "Avançado 80", "docs": 80, "monthly": "R$ 54,90"},
-    {"name": "Avançado 200", "docs": 200, "monthly": "R$ 124,90"},
+    {"name": "Iniciante 20", "docs": 20, "Mensal": 1990, "Anual": 17880},
+    {"name": "Iniciante 80", "docs": 80, "Mensal": 4490, "Anual": 47880},
+    {"name": "Avançado 80", "docs": 80, "Mensal": 5490, "Anual": 53880},
+    {"name": "Avançado 200", "docs": 200, "Mensal": 12490, "Anual": 131880},
 )
+
+#: What the checkout call sends, and the order the picker lists them in.
+FREQUENCIES = ("Mensal", "Anual")
+
+
+def format_price(centavos):
+    """R$ 1.318,80 — pt-BR grouping and decimal comma."""
+    reais = "%.2f" % (centavos / 100.0)
+    whole, cents = reais.split(".")
+    grouped = ""
+    while len(whole) > 3:
+        grouped = "." + whole[-3:] + grouped
+        whole = whole[:-3]
+    return "R$ %s%s,%s" % (whole, grouped, cents)
 
 
 def has_fiscal(store, stage=None):

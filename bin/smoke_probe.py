@@ -323,6 +323,23 @@ def main():
               "open0" in consent_controls and "open1" in consent_controls)
 
         ui_dialogs.run_upgrade(ctx, None, store, s, "hml")
+        # -- prices follow the billing period -----------------------------
+        # The list quoted monthly prices next to "Anual": the number the user
+        # is about to be charged, wrong by a factor of twelve, in the
+        # direction that looks cheaper.
+        monthly_row = s("plan_row") % (
+            probe_api.PLANS[0]["name"], probe_api.PLANS[0]["docs"],
+            probe_api.format_price(probe_api.PLANS[0]["Mensal"]) + s("per_month"))
+        annual_row = s("plan_row") % (
+            probe_api.PLANS[0]["name"], probe_api.PLANS[0]["docs"],
+            probe_api.format_price(probe_api.PLANS[0]["Anual"]) + s("per_year"))
+        check("a monthly row quotes the monthly price",
+              "19,90" in monthly_row and s("per_month") in monthly_row,
+              monthly_row)
+        check("an annual row quotes the ANNUAL price, not the monthly one",
+              "178,80" in annual_row and "19,90" not in annual_row,
+              annual_row)
+
         check("upgrade dialog builds",
               "plans" in built.get(s("upgrade_title"), [])
               and "freq" in built.get(s("upgrade_title"), []))

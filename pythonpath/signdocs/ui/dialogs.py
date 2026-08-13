@@ -456,13 +456,32 @@ def run_upgrade(ctx, frame, store, s, stage):
     inner = width - 2 * MARGIN
 
     dialog.label("intro", MARGIN, MARGIN, inner, 10, s("upgrade_intro"))
-    dialog.listctl("plans", MARGIN, MARGIN + 14, inner, 52,
-                   [s("plan_row") % (p["name"], p["docs"], p["monthly"])
-                    for p in api.PLANS])
+    dialog.listctl("plans", MARGIN, MARGIN + 14, inner, 52, [])
     y = MARGIN + 70
     dialog.label("l1", MARGIN, y + 2, 60, 10, s("billing"))
     dialog.listbox("freq", 70, y, inner - 62, 12,
                    [s("monthly"), s("annual")], 0)
+
+    def repriced():
+        """
+        Re-label the plans for the chosen billing period.
+
+        Without this the list kept quoting monthly prices next to "Anual",
+        which is the number the user is about to be charged — off by a factor
+        of twelve, and in the direction that looks cheaper.
+        """
+        frequency = api.FREQUENCIES[max(0, dialog.selected_index("freq"))]
+        suffix = s("per_year") if frequency == "Anual" else s("per_month")
+        dialog.set_items(
+            "plans",
+            [s("plan_row") % (p["name"], p["docs"],
+                              api.format_price(p[frequency]) + suffix)
+             for p in api.PLANS],
+            keep_selection=True,
+        )
+
+    dialog.on_change("freq", repriced)
+    repriced()
 
     def go():
         index = dialog.selected_index("plans")
@@ -470,7 +489,7 @@ def run_upgrade(ctx, frame, store, s, stage):
             msgbox.error(ctx, frame, s("pick_a_plan"), s("app"))
             return
         plan = api.PLANS[index]["name"]
-        frequency = ("Mensal", "Anual")[max(0, dialog.selected_index("freq"))]
+        frequency = api.FREQUENCIES[max(0, dialog.selected_index("freq"))]
 
         # Asked before the form is drawn, so the majority — anyone signing in
         # with an existing SignDocs account — never sees it at all.

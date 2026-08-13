@@ -389,6 +389,10 @@ _STRINGS = {
         "en": "Choose a plan to keep sending documents.",
         "es": "Elige un plan para seguir enviando documentos.",
     },
+    # The period is part of the price, not decoration: "R$ 538,80" beside
+    # "Anual" with no suffix reads as a monthly charge.
+    "per_month": {"pt": "/mês", "en": "/month", "es": "/mes"},
+    "per_year": {"pt": "/ano", "en": "/year", "es": "/año"},
     "plan_row": {"pt": "%s — %d documentos/mês — %s",
                  "en": "%s — %d documents/month — %s",
                  "es": "%s — %d documentos/mes — %s"},
