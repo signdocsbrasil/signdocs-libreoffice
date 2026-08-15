@@ -32,14 +32,29 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-BUCKET="${SIGNDOCS_CDN_BUCKET:-sigext-cdn-js-prod}"
+# Supplied by the environment, with no default. The bucket name and the
+# distribution id are not secrets — neither grants access without credentials —
+# but neither is compiled into the shipped .oxt either, so naming them in a
+# public repository would hand a reader the exact upload target for nothing in
+# return. Whoever publishes a release already has the credentials; they can
+# carry two variables.
+BUCKET="${SIGNDOCS_CDN_BUCKET:-}"
 # The bucket is readable only through this distribution, so an upload is
 # invisible to users until the edge cache is invalidated.
-DISTRIBUTION="${SIGNDOCS_CDN_DISTRIBUTION:-E2VDJREOZ5NVQP}"
+DISTRIBUTION="${SIGNDOCS_CDN_DISTRIBUTION:-}"
 PREFIX="libreoffice"
 BASE="https://cdn.signdocs.com.br/$PREFIX"
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
+
+# Fail before any check runs, and name both variables at once: finding out
+# about the second one only after fixing the first is a poor way to learn a
+# release procedure.
+if [ -z "$BUCKET" ] || [ -z "$DISTRIBUTION" ]; then
+  echo "  FAIL: set SIGNDOCS_CDN_BUCKET and SIGNDOCS_CDN_DISTRIBUTION" >&2
+  echo "        (the S3 bucket and the CloudFront distribution id for the CDN)" >&2
+  exit 1
+fi
 
 fail() { echo "  FAIL: $*" >&2; exit 1; }
 ok()   { echo "  ok  $*"; }

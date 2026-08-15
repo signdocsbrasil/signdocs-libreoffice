@@ -33,10 +33,11 @@ API_PREFIX = "/libreoffice"
 #: Sign-in, via Cognito managed login on our own domain.
 #:
 #: **Per stage, and it has to be.** backend-sign-docs deploys a separate
-#: Cognito pool per Amplify branch — master/prod is us-east-1_7wz2lnW8F (421
-#: users) and dev/hml is us-east-1_smgTkPiS3 (6). Pointing both stages at one
-#: pool would let production credentials open homologação data and the
-#: reverse, which is precisely the separation staging exists to provide.
+#: Cognito pool per Amplify branch — master/prod is us-east-1_7wz2lnW8F and
+#: dev/hml is us-east-1_smgTkPiS3, with entirely separate user populations.
+#: Pointing both stages at one pool would let production credentials open
+#: homologação data and the reverse, which is precisely the separation staging
+#: exists to provide.
 #:
 #: (The SSM parameter /signdocs/hml/cognito-user-pool-id currently names the
 #: PROD pool. That governs external-api's admin auth, not this, but it is the
