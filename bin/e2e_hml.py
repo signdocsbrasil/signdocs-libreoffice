@@ -40,6 +40,22 @@ failures = []
 created = []
 
 
+def redacted(url):
+    """
+    A signing URL with its credential taken out.
+
+    The `?cs=ss_secret_…` half IS the authentication for a CLICK_ONLY signature,
+    so printing even a prefix of it puts a live credential in a terminal
+    scrollback and, sooner or later, in a pasted bug report. Every assertion
+    here is about whether the link is well formed or fetchable — none of them
+    needs the secret itself, so none of them gets it.
+    """
+    if not url:
+        return ""
+    head, sep, _ = str(url).partition("?cs=")
+    return head + ("?cs=<redigido>" if sep else "")
+
+
 def check(label, condition, detail=""):
     print("  %s %s%s" % ("ok  " if condition else "FAIL", label,
                          ("  -- " + str(detail)) if detail else ""))
@@ -178,7 +194,7 @@ def main():
     created.append(("session", sent["id"]))
     check("session created", bool(sent["id"]), sent["id"])
     link = sent["links"][0]["url"]
-    check("link returned", bool(link), (link or "")[:70])
+    check("link returned", bool(link), redacted(link))
 
     status = api.status_of(store, "session", sent["id"], stage=STAGE)
     check("status is ACTIVE", status["status"] == "ACTIVE", status["status"])
@@ -207,7 +223,7 @@ def main():
         if entry.get("url"):
             check("envelope link carries its client secret",
                   "?cs=ss_secret_" in entry["url"],
-                  entry["url"][:70])
+                  redacted(entry["url"]))
     env_status = api.status_of(store, "envelope", env["id"], stage=STAGE)
     check("envelope reports 2 signers", env_status["total"] == 2, env_status["total"])
 
@@ -216,11 +232,11 @@ def main():
     # "take me back to my document" has to mint a new one. This is the whole
     # mechanism behind the Assinar agora button surviving a closed window.
     url = api.sign_link(store, "session", sent["id"], stage=STAGE)
-    check("a link was minted for my own session", bool(url), (url or "")[:70])
+    check("a link was minted for my own session", bool(url), redacted(url))
     check("the minted link carries a client secret",
           "cs=ss_secret_" in (url or ""))
     if url:
-        check("the minted link actually loads", _fetchable(url), url[:70])
+        check("the minted link actually loads", _fetchable(url), redacted(url))
     # Minted, not looked up: a second call must work and must differ.
     again = api.sign_link(store, "session", sent["id"], stage=STAGE)
     check("a second call mints another working link",
@@ -248,7 +264,7 @@ def main():
         # The sender's own envelope link is exactly the one nobody e-mails, so
         # it has to be verified by loading it rather than by inspection.
         check("the sender's own envelope link actually loads",
-              _fetchable(mine["url"]), mine["url"][:70])
+              _fetchable(mine["url"]), redacted(mine["url"]))
     check("another signer's click-only link is WITHHELD",
           bool(theirs) and not theirs.get("url"),
           (theirs or {}).get("url") or "absent")
