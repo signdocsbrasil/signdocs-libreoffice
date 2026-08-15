@@ -30,7 +30,8 @@ def _strip(name):
 def test_prices_match_the_app_table():
     if not os.path.exists(APP):
         return  # sibling checkout absent; the extension still builds alone
-    src = open(APP, encoding="utf-8").read()
+    with open(APP, encoding="utf-8") as fh:
+        src = fh.read()
     app_prices = {
         _strip(n): {"Mensal": int(m), "Anual": int(a)}
         for n, m, a in re.findall(

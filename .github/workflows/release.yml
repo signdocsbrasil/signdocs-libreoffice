@@ -82,7 +82,10 @@ jobs:
       # it back and compares sha256, then prints the feed bump to make in
       # external-api. Order matters: binary first, feed second.
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        # Pinned to a commit, not the mutable v2 tag. This step runs with
+        # contents: write and publishes the .oxt, so a tag repointed at
+        # hostile code would tamper with the released binary itself.
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           files: signdocs-brasil-*.oxt
           generate_release_notes: true

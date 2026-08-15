@@ -34,7 +34,8 @@ def test_the_client_forces_the_same_profiles_the_server_does():
     # extension has to build on its own.
     if not os.path.exists(SERVER):
         return
-    src = open(SERVER, encoding="utf-8").read()
+    with open(SERVER, encoding="utf-8") as fh:
+        src = fh.read()
     match = re.search(r"ORDER_DEPENDENT_PROFILES\s*=\s*new Set\(\[([^\]]*)\]", src)
     assert match, "the server no longer declares ORDER_DEPENDENT_PROFILES"
     server_profiles = set(re.findall(r"'([^']+)'", match.group(1)))
@@ -71,7 +72,8 @@ def test_the_client_quotes_the_window_the_server_actually_uses():
     window = os.path.normpath(window)
     if not os.path.exists(window):
         return
-    src = open(window, encoding="utf-8").read()
+    with open(window, encoding="utf-8") as fh:
+        src = fh.read()
     match = re.search(r"DEFAULT_SIGNING_WINDOW_MINUTES\s*=\s*(\d+)", src)
     assert match, "the server no longer declares DEFAULT_SIGNING_WINDOW_MINUTES"
 

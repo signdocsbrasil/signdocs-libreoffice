@@ -140,7 +140,13 @@ def main():
         print("  opening your browser at %s ..." % config.STAGES[STAGE]["login"])
         token = oauth.connect(store, STAGE, timeout=300)
         check("signed in", bool(token))
-        print("     reuse with: export SIGNDOCS_ID_TOKEN=%s..." % token[:24])
+        # Deliberately prints nothing derived from the token. The 24-char
+        # prefix this used to show was only the JWT header — identical for
+        # every token from the pool, so it revealed nothing — but it was
+        # also useless, since a truncated token cannot be reused. It only
+        # taught CodeQL to flag the line and a reader to paste a value that
+        # would not work.
+        print("     reuse with: export SIGNDOCS_ID_TOKEN=<o token completo>")
 
     section("channel registration and plan")
     try:
