@@ -478,7 +478,10 @@ def main():
             # would make it a local for the whole of main(), and the uses far
             # above would fail with UnboundLocalError.
             def _p(n, v):
-                q = PropertyValue(); q.Name = n; q.Value = v; return q
+                q = PropertyValue()
+                q.Name = n
+                q.Value = v
+                return q
 
             pdf_doc = desktop.loadComponentFromURL(
                 "private:factory/swriter", "_blank", 0, (_p("Hidden", True),))
