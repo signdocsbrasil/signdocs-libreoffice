@@ -18,7 +18,7 @@ import threading
 import urllib.parse
 import uuid
 
-from signdocs import api, config, history, intake, oauth, sync, validators
+from signdocs import api, config, history, intake, oauth, preview, sync, validators
 from signdocs.ui import async_work, msgbox, strings
 from signdocs.ui.widgets import (
     BUTTON_H,
@@ -889,8 +889,84 @@ def _sync_move_buttons(dialog, state):
     dialog.enable("down", count > 1 and 0 <= index < count - 1)
 
 
+# ---------------------------------------------------------- preview dialog
+def preview_dialog(ctx, frame, s, document):
+    """
+    Show the exported PDF, a page at a time.
+
+    The review screen names the document; this is the only place the sender
+    sees the bytes that will actually be sent. Each module reaches PDF through
+    its own export filter, so a spreadsheet paginated across sheets or a
+    drawing exported at the wrong area looks identical from a filename — and by
+    the time the invitations are out, the quota is spent and the links are in
+    other people's inboxes.
+
+    Rendering is slow enough to notice, so every page goes through `busy()` on
+    a worker thread. Never the office's dispatch thread: the office parses the
+    whole PDF to answer, and a frozen Writer is how that reads to a user.
+    """
+    state = {"page": 0, "count": 1}
+
+    first = busy(ctx, parent_window(frame), s("preview_building"),
+                 lambda: preview.render(ctx, document, 0))
+    if first is None:
+        return                      # dismissed while rendering
+    if not first.ok:
+        # Not fatal, and said so: a missing PDF importer must not read as a
+        # failed send. The caller returns to the review screen unchanged.
+        msgbox.error(ctx, frame,
+                     s("preview_unavailable") % (str(first.error) or "?"),
+                     s("app"))
+        return
+    graphic, state["count"] = first.value
+
+    # Portrait, sized so an A4 page is legible without a scrollable dialog.
+    width, height = 300, 420
+    dialog = Dialog(ctx, s("preview_title"), width, height)
+    inner = width - 2 * MARGIN
+
+    image = dialog._add("UnoControlImageControlModel", "page",
+                        MARGIN, MARGIN, inner, height - 44,
+                        ScaleImage=True, Border=1)
+    image.Graphic = graphic
+    dialog.label("counter", MARGIN, height - 32, inner, 10,
+                 s("preview_page") % (1, state["count"]))
+
+    def show_page(delta):
+        target = state["page"] + delta
+        if target < 0 or target >= state["count"]:
+            return
+        result = busy(ctx, parent_window(frame), s("preview_building"),
+                      lambda: preview.render(ctx, document, target))
+        if result is None or not result.ok:
+            # Page 1 already rendered, so a later failure is transient rather
+            # than structural. Keep the page that works on screen.
+            return
+        state["page"] = target
+        image.Graphic = result.value[0]
+        dialog.set_label("counter", s("preview_page") % (target + 1, state["count"]))
+        _sync_pages(dialog, state)
+
+    y = height - BUTTON_H - MARGIN + 2
+    dialog.button("prev", MARGIN, y, BUTTON_W, BUTTON_H, s("preview_prev"),
+                  lambda: show_page(-1))
+    dialog.button("next", MARGIN + BUTTON_W + 4, y, BUTTON_W, BUTTON_H,
+                  s("preview_next"), lambda: show_page(1))
+    dialog.button("close", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
+                  s("close"), lambda: dialog.finish(True))
+    _sync_pages(dialog, state)
+
+    dialog.show(parent_window(frame))
+
+
+def _sync_pages(dialog, state):
+    """Grey out a move with nowhere to go, as the signer list does."""
+    dialog.enable("prev", state["page"] > 0)
+    dialog.enable("next", state["page"] < state["count"] - 1)
+
+
 # ----------------------------------------------------------- review dialog
-def review_dialog(ctx, frame, s, state, filename):
+def review_dialog(ctx, frame, s, state, filename, document=None):
     width = 300
     lines = [
         "%s: %s" % (s("document"), filename),
@@ -913,6 +989,13 @@ def review_dialog(ctx, frame, s, state, filename):
                    [_signer_line(i, sg) for i, sg in enumerate(state["signers"])])
 
     y = height - BUTTON_H - MARGIN
+    # Left-aligned, away from Voltar/Enviar: this is the one button here that
+    # does not decide anything, and putting it next to "Enviar agora" invites
+    # the click nobody wants to make by accident.
+    if document:
+        dialog.button("preview", MARGIN, y, BUTTON_W + 10, BUTTON_H,
+                      s("preview"),
+                      lambda: preview_dialog(ctx, frame, s, document))
     dialog.button("back", width - 2 * BUTTON_W - 2 * MARGIN, y, BUTTON_W,
                   BUTTON_H, s("back"), lambda: dialog.finish("back"))
     dialog.button("send", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
@@ -1326,24 +1409,33 @@ def run_send(ctx, frame, store):
         if send_dialog(ctx, frame, store, s, state) != "review":
             return
 
+        # Exported BEFORE the review, not after, so that "confirm what will be
+        # sent" is literally true: the preview renders these bytes and the send
+        # transmits these bytes. Exporting again after the review would show
+        # the user one PDF and send another — a difference nobody could see,
+        # which is the worst kind.
+        #
+        # The cost is exporting for a send the user then abandons. That is
+        # local, and cheaper than the failure it prevents: a wrong export is
+        # only discoverable after the invitations are out and the quota spent.
+        exported = busy(ctx, parent_window(frame), s("busy_export"),
+                        lambda: intake.export_pdf(document_model))
+        if not _report(ctx, frame, exported, s):
+            continue
+        document = exported.value
+
         try:
             filename = intake.filename_for(document_model)
         except Exception:
-            filename = "documento.pdf"
+            filename = document.get("filename") or "documento.pdf"
 
-        if review_dialog(ctx, frame, s, state, filename) != "send":
+        if review_dialog(ctx, frame, s, state, filename, document) != "send":
             continue
 
         try:
             store.set(config.STORAGE["profile"], state["profile"])
         except Exception:
             pass
-
-        exported = busy(ctx, parent_window(frame), s("busy_export"),
-                        lambda: intake.export_pdf(document_model))
-        if not _report(ctx, frame, exported, s):
-            continue
-        document = exported.value
 
         if idempotency_key is None:
             idempotency_key = str(uuid.uuid4())

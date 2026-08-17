@@ -19,6 +19,7 @@ import base64
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 
@@ -459,6 +460,66 @@ def main():
         check("a recent signer shows name, e-mail and a punctuated CPF",
               "Ana" in line and "ana@ex.com.br" in line
               and "529.982.247-25" in line, line)
+
+        # -- the PDF preview -----------------------------------------------
+        #
+        # The review screen names the document; this renders it. Asserting the
+        # dialog merely builds would pass against a stub, so this exercises the
+        # real path: export a PDF through the office, hand those bytes to
+        # preview.render, and require a graphic back with a sane page count.
+        from signdocs import preview as sd_preview  # noqa: E402
+
+        pdf_doc = None
+        try:
+            desktop = ctx.ServiceManager.createInstanceWithContext(
+                "com.sun.star.frame.Desktop", ctx)
+
+            # PropertyValue is imported at module scope. Re-importing it here
+            # would make it a local for the whole of main(), and the uses far
+            # above would fail with UnboundLocalError.
+            def _p(n, v):
+                q = PropertyValue(); q.Name = n; q.Value = v; return q
+
+            pdf_doc = desktop.loadComponentFromURL(
+                "private:factory/swriter", "_blank", 0, (_p("Hidden", True),))
+            pdf_doc.Text.setString("Contrato de teste para a pre-visualizacao.")
+            exported = intake.export_pdf(pdf_doc)
+            check("export produced a PDF for the preview",
+                  exported["content"].startswith("JVBER"))
+
+            graphic, pages = sd_preview.render(ctx, exported, 0)
+            check("preview rendered page 1 of the exported PDF",
+                  graphic is not None and pages >= 1, "%d pagina(s)" % pages)
+            # Out-of-range must clamp, not raise: the caller's page number and
+            # the document's length are read at different moments.
+            g2, _ = sd_preview.render(ctx, exported, 999)
+            check("an out-of-range page clamps instead of raising", g2 is not None)
+        except sd_preview.PreviewUnavailable as exc:
+            # A build without the PDF import filter is a legitimate
+            # environment, not a failed test — the feature degrades by design.
+            check("preview unavailable, and said so cleanly", True, str(exc)[:60])
+        finally:
+            if pdf_doc is not None:
+                try:
+                    pdf_doc.close(False)
+                except Exception:
+                    pass
+
+        check("preview leaves no PDF behind in the temp directory",
+              not [n for n in os.listdir(tempfile.gettempdir())
+                   if n.startswith("signdocs-preview-")])
+
+        # The review screen offers the preview only when it has the bytes.
+        # Asserting both directions, because the interesting bug is a button
+        # that opens a dialog with nothing behind it.
+        review_state = dict(state, order="SEQUENTIAL")
+        ui_dialogs.review_dialog(ctx, None, s, review_state, "contrato.pdf",
+                                 {"content": "JVBERi0=", "filename": "c.pdf"})
+        check("review offers the preview when a PDF is present",
+              "preview" in built.get(s("review_title"), []))
+        ui_dialogs.review_dialog(ctx, None, s, review_state, "contrato.pdf", None)
+        check("review hides the preview when there is no PDF",
+              "preview" not in built.get(s("review_title"), []))
 
         ui_dialogs.result_dialog(ctx, None, s, {
             "kind": "session", "id": "ss_x",

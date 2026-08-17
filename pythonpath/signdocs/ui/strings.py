@@ -235,6 +235,31 @@ _STRINGS = {
         "es": "El archivo tiene más filas de las que caben: solo se añadieron "
               "las %d primeras.",
     },
+    # The review screen names the document; this shows it. Each module reaches
+    # PDF through its own export filter, so "the right file" and "the right
+    # bytes" are different claims — a spreadsheet can paginate oddly and a
+    # drawing can export the wrong area, and neither is visible from a filename.
+    "preview": {"pt": "Ver o PDF", "en": "View the PDF", "es": "Ver el PDF"},
+    "preview_title": {"pt": "Conferir o documento",
+                      "en": "Check the document",
+                      "es": "Revisar el documento"},
+    "preview_page": {"pt": "Página %d de %d", "en": "Page %d of %d",
+                     "es": "Página %d de %d"},
+    "preview_prev": {"pt": "Anterior", "en": "Previous", "es": "Anterior"},
+    "preview_next": {"pt": "Próxima", "en": "Next", "es": "Siguiente"},
+    "preview_building": {"pt": "Preparando a visualização...",
+                         "en": "Preparing the preview...",
+                         "es": "Preparando la vista previa..."},
+    # A preview is a convenience, so its absence is stated and the send goes on.
+    # The importer is a separate package on several distributions.
+    "preview_unavailable": {
+        "pt": "Não foi possível mostrar o PDF aqui: %s\n\nO envio continua "
+              "normal — só a pré-visualização não está disponível.",
+        "en": "The PDF cannot be shown here: %s\n\nSending still works — only "
+              "the preview is unavailable.",
+        "es": "No se puede mostrar el PDF aquí: %s\n\nEl envío sigue "
+              "funcionando — solo la vista previa no está disponible.",
+    },
     "move_up": {"pt": "Subir", "en": "Up", "es": "Subir"},
     "move_down": {"pt": "Descer", "en": "Down", "es": "Bajar"},
     "recent": {"pt": "Recentes", "en": "Recent", "es": "Recientes"},

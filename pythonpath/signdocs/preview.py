@@ -1,0 +1,176 @@
+# SPDX-License-Identifier: MPL-2.0
+"""
+Render a page of the exported PDF, so the sender sees the bytes rather than a
+filename.
+
+The review screen used to name the document and list the signers, which catches
+a wrong recipient but never a wrong *document*. The failure it could not catch
+is the one the export path makes possible: each module reaches PDF by its own
+filter (`intake.FILTERS`), and a spreadsheet can paginate across sheets or a
+drawing can export the wrong area, silently. By then the invitations are out and
+the quota is spent.
+
+## Why it renders through the office rather than a library
+
+`bin/check-oxt.sh` asserts the package imports nothing third-party, so pypdfium
+and PyMuPDF are out. The office already has a PDF importer, and it is reached
+through UNO like everything else here.
+
+## Why it goes via a temp file
+
+Loading `private:stream` with `draw_pdf_import` **crashes the office** — an
+assertion failure on a null `SvStream` inside LibreOffice, not an exception this
+code could catch. Measured on 25.8; feeding it a file URL instead works.
+
+Writing the PDF out is not a new exposure: `intake.export_pdf` already writes
+exactly these bytes to a temp file and deletes them inside the same call. The
+rule is that the plaintext copy must not outlive the call, and it does not — the
+`finally` here removes it before the caller sees a result. The rendered page
+travels back as an in-memory `XGraphic`, so nothing derived from the document
+stays on disk either.
+
+## Why it may be unavailable
+
+The PDF importer is a separate package on some distributions
+(`libreoffice-pdfimport` on Fedora, `libreoffice-draw` elsewhere). A preview is
+a convenience: when the importer is missing, the caller says so and the send
+continues. It must never become a reason a document cannot be sent.
+"""
+
+import base64
+import os
+import tempfile
+
+#: Rendered width. Enough that body text is legible on a HiDPI screen without
+#: making the PNG large enough to feel slow to build for a long document.
+RENDER_WIDTH_PX = 1000
+
+#: A4 is 1:√2; the height only bounds the export, and the importer keeps the
+#: page's own aspect ratio inside it.
+RENDER_HEIGHT_PX = 1414
+
+
+class PreviewUnavailable(Exception):
+    """No preview is possible here. Never fatal to a send."""
+
+
+def _prop(ctx, name, value):
+    from com.sun.star.beans import PropertyValue
+    p = PropertyValue()
+    p.Name = name
+    p.Value = value
+    return p
+
+
+def _drain(pipe):
+    """Read a com.sun.star.io.Pipe to the end as bytes."""
+    chunks = []
+    while True:
+        read, chunk = pipe.readBytes(None, 65536)
+        if read <= 0:
+            break
+        chunks.append(bytes(chunk.value if hasattr(chunk, "value") else chunk))
+    return b"".join(chunks)
+
+
+def render(ctx, document, page_index=0):
+    """
+    Render one page of `document` (the dict `intake.export_pdf` returns).
+
+    Returns `(graphic, page_count)`. `page_index` is clamped into range rather
+    than raising, because the caller's page number and the document's real
+    length can disagree only by being asked at different moments.
+
+    Blocking and slow — the office parses the whole PDF to answer. Worker
+    thread only, never the office's dispatch thread.
+    """
+    import unohelper
+
+    try:
+        raw = base64.b64decode(document["content"])
+    except Exception:
+        raise PreviewUnavailable("O PDF exportado não pôde ser lido.")
+
+    smgr = ctx.ServiceManager
+    handle, path = tempfile.mkstemp(suffix=".pdf", prefix="signdocs-preview-")
+    os.close(handle)
+    doc = None
+    try:
+        with open(path, "wb") as fh:
+            fh.write(raw)
+
+        desktop = smgr.createInstanceWithContext("com.sun.star.frame.Desktop", ctx)
+        try:
+            doc = desktop.loadComponentFromURL(
+                unohelper.systemPathToFileUrl(path), "_blank", 0,
+                (_prop(ctx, "FilterName", "draw_pdf_import"),
+                 _prop(ctx, "Hidden", True),
+                 _prop(ctx, "ReadOnly", True)))
+        except Exception as exc:
+            raise PreviewUnavailable(str(exc))
+        if doc is None:
+            # What a missing PDF importer looks like: no exception, no document.
+            raise PreviewUnavailable("O visualizador de PDF não está instalado.")
+
+        pages = doc.DrawPages
+        count = pages.Count
+        if count < 1:
+            raise PreviewUnavailable("O PDF exportado não tem páginas.")
+        index = max(0, min(int(page_index), count - 1))
+
+        pipe = smgr.createInstanceWithContext("com.sun.star.io.Pipe", ctx)
+        exporter = smgr.createInstanceWithContext(
+            "com.sun.star.drawing.GraphicExportFilter", ctx)
+        exporter.setSourceDocument(pages.getByIndex(index))
+        exporter.filter((
+            _prop(ctx, "FilterName", "PNG"),
+            _prop(ctx, "OutputStream", pipe),
+            _prop(ctx, "FilterData", _size_filter_data(ctx)),
+        ))
+        png = _drain(pipe)
+        if not png.startswith(b"\x89PNG"):
+            raise PreviewUnavailable("A página não pôde ser convertida em imagem.")
+
+        return _graphic_from_png(ctx, png), count
+    finally:
+        # Close before unlinking: the importer holds the file open, and on
+        # Windows a delete underneath it fails outright.
+        if doc is not None:
+            try:
+                doc.close(False)
+            except Exception:
+                pass
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _size_filter_data(ctx):
+    import uno
+    return uno.Any("[]com.sun.star.beans.PropertyValue", (
+        _prop(ctx, "PixelWidth", RENDER_WIDTH_PX),
+        _prop(ctx, "PixelHeight", RENDER_HEIGHT_PX),
+    ))
+
+
+def _graphic_from_png(ctx, png):
+    """
+    PNG bytes -> XGraphic, in memory.
+
+    An image control can be given a `Graphic` directly, so the picture never
+    needs a URL and therefore never needs a file. Writing the rendered page out
+    would put a readable copy of the document back on disk, which is the thing
+    this module is careful not to do.
+    """
+    import uno
+    smgr = ctx.ServiceManager
+    stream = smgr.createInstanceWithContext(
+        "com.sun.star.io.SequenceInputStream", ctx)
+    stream.initialize((uno.ByteSequence(png),))
+    provider = smgr.createInstanceWithContext(
+        "com.sun.star.graphic.GraphicProvider", ctx)
+    graphic = provider.queryGraphic((_prop(ctx, "InputStream", stream),))
+    if graphic is None:
+        raise PreviewUnavailable("A imagem da página não pôde ser carregada.")
+    return graphic
