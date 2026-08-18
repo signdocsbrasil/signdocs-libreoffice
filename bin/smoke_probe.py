@@ -536,9 +536,10 @@ def main():
         toolkit = ctx.ServiceManager.createInstanceWithContext(
             "com.sun.star.awt.Toolkit", ctx)
         area = toolkit.getWorkArea()
-        fit_w, fit_h = sd_widgets.fit_to_screen(ctx, 300, 400)
-        check("preview size fits the work area",
-              fit_w <= 300 and fit_h <= 400 and fit_w > 0 and fit_h > 0,
+        fit_w, fit_h = sd_widgets.screen_sized(ctx)
+        check("preview size stays within its bounds",
+              sd_widgets.MIN_SIZE[0] <= fit_w <= sd_widgets.MAX_SIZE[0]
+              and sd_widgets.MIN_SIZE[1] <= fit_h <= sd_widgets.MAX_SIZE[1],
               "%dx%d AppFont numa area de %dx%d px"
               % (fit_w, fit_h, area.Width, area.Height))
 

@@ -209,31 +209,33 @@ class Dialog(object):
             pass
 
 
-#: Fraction of the screen's work area a dialog may occupy. Leaves room for the
-#: window decoration the office draws outside the dialog's own size.
-SCREEN_FRACTION = 0.85
+#: Share of the screen's work area a large dialog should take. Big enough that
+#: a document page is worth looking at, short of the edges so the window
+#: decoration and any panel still fit.
+SCREEN_FRACTION = 0.7
 
-#: Used when the screen cannot be measured. Chosen to fit a 768-pixel-tall
-#: display at the densest scaling seen in practice, because being too small is
-#: a cramped dialog and being too large is buttons nobody can reach.
-FALLBACK_MAX = (260, 200)
+#: Bounds in map-AppFont units. The floor keeps the dialog usable if the screen
+#: measures implausibly small; the ceiling stops it sprawling on a very large
+#: monitor, where a page blown up to 2000 units tall is no easier to read.
+MIN_SIZE = (240, 200)
+MAX_SIZE = (560, 620)
 
 
-def fit_to_screen(ctx, width, height):
+def screen_sized(ctx, fraction=SCREEN_FRACTION,
+                 minimum=MIN_SIZE, maximum=MAX_SIZE):
     """
-    Shrink a wanted dialog size to something that fits on this screen.
+    A dialog size derived from this screen, in map-AppFont units.
 
-    Sizes here are map-AppFont units, and the pixels they come to depend on the
-    screen's scaling — the same 420-tall dialog is comfortable on one machine
-    and taller than the display on another. Ours was the second: the buttons
-    and the page counter sat below the bottom edge, so a multi-page preview had
-    no reachable way to turn the page and looked like it only had one.
+    Two bugs came from not doing this. A fixed 420-unit height was 1344 pixels
+    on one display — taller than the screen, so the buttons were unreachable.
+    Capping that fixed request to the screen then made the dialog tiny on a
+    large monitor, because a cap can only ever shrink. Neither is fixable with
+    a better constant: what a unit is worth in pixels depends on the office's
+    scaling, so the size has to come from the screen rather than be checked
+    against it.
 
-    Measured rather than guessed: the toolkit reports the work area in pixels
-    and the dialog converts pixels to AppFont, so this asks both instead of
-    assuming a ratio. Falls back to a conservative cap if either is
-    unavailable, since a headless or unusual display must not stop a dialog
-    opening at all.
+    Falls back to the floor when the screen cannot be measured, since a
+    headless or unusual display must not stop a dialog opening.
     """
     try:
         smgr = ctx.ServiceManager
@@ -250,18 +252,19 @@ def fit_to_screen(ctx, width, height):
         try:
             import uno
             size = uno.createUnoStruct("com.sun.star.awt.Size")
-            size.Width = int(area.Width * SCREEN_FRACTION)
-            size.Height = int(area.Height * SCREEN_FRACTION)
+            size.Width = int(area.Width * fraction)
+            size.Height = int(area.Height * fraction)
             logic = probe.convertSizeToLogic(size, 6)   # 6 = MeasureUnit.APPFONT
-            max_w, max_h = logic.Width, logic.Height
+            width, height = int(logic.Width), int(logic.Height)
         finally:
             probe.dispose()
-        if max_w < 40 or max_h < 40:
+        if width < 40 or height < 40:
             raise ValueError("implausible work area")
     except Exception:
-        max_w, max_h = FALLBACK_MAX
+        width, height = minimum
 
-    return min(width, max_w), min(height, max_h)
+    return (max(minimum[0], min(width, maximum[0])),
+            max(minimum[1], min(height, maximum[1])))
 
 
 def pick_file(ctx, title, patterns=()):

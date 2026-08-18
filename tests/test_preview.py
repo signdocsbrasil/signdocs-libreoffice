@@ -130,25 +130,31 @@ def test_a_missing_content_key_does_not_crash():
 
 
 # ---------------------------------------------------- dialog fits the screen
-def test_a_dialog_never_asks_for_more_than_the_fallback_when_unmeasurable():
+def test_an_unmeasurable_screen_still_yields_a_usable_size():
     """
-    The bug this guards: a fixed 420-unit-tall preview came to 1344 pixels once
-    the office's scaling was applied, so the page counter and both page buttons
-    fell below a 1200-pixel screen. A four-page document then looked like a
-    one-page document, because the only way to turn the page was off-screen.
+    Two bugs, one cause. A fixed 420-unit height came to 1344 pixels on a
+    1200-pixel display, putting the page buttons off-screen — a four-page
+    document then looked like a one-page one. Capping that fixed request to the
+    screen fixed the overflow and made the dialog tiny on a large monitor,
+    because a cap can only shrink. The size has to be derived from the screen.
     """
     from signdocs.ui import widgets
 
-    # A context that cannot answer: the fallback has to be small enough for a
-    # 768-pixel display, which is the smallest anyone realistically runs.
-    w, h = widgets.fit_to_screen(FakeCtx(raiser=RuntimeError("sem toolkit")),
-                                 300, 400)
-    assert (w, h) <= widgets.FALLBACK_MAX
-    assert h <= widgets.FALLBACK_MAX[1]
+    w, h = widgets.screen_sized(FakeCtx(raiser=RuntimeError("sem toolkit")))
+    assert (w, h) == widgets.MIN_SIZE
 
 
-def test_fit_to_screen_never_enlarges_what_was_asked_for():
+def test_the_size_is_always_within_its_bounds():
     from signdocs.ui import widgets
 
-    w, h = widgets.fit_to_screen(FakeCtx(raiser=RuntimeError("x")), 120, 90)
-    assert (w, h) == (120, 90)
+    w, h = widgets.screen_sized(FakeCtx(raiser=RuntimeError("x")))
+    assert widgets.MIN_SIZE[0] <= w <= widgets.MAX_SIZE[0]
+    assert widgets.MIN_SIZE[1] <= h <= widgets.MAX_SIZE[1]
+
+
+def test_the_floor_leaves_room_for_a_page_and_its_controls():
+    # The image takes height - 44; below roughly 200 units there is no picture
+    # left worth calling a preview.
+    from signdocs.ui import widgets
+
+    assert widgets.MIN_SIZE[1] - 44 >= 150
