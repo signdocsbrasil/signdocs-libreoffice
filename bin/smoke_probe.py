@@ -527,6 +527,21 @@ def main():
                 except Exception:
                     pass
 
+        # The dialog has to fit the screen it opens on. A fixed height came to
+        # more pixels than the display had, which put the page buttons below
+        # the bottom edge — invisible in any test that only checks the controls
+        # exist, and indistinguishable from "multi-page does not work".
+        from signdocs.ui import widgets as sd_widgets  # noqa: E402
+
+        toolkit = ctx.ServiceManager.createInstanceWithContext(
+            "com.sun.star.awt.Toolkit", ctx)
+        area = toolkit.getWorkArea()
+        fit_w, fit_h = sd_widgets.fit_to_screen(ctx, 300, 400)
+        check("preview size fits the work area",
+              fit_w <= 300 and fit_h <= 400 and fit_w > 0 and fit_h > 0,
+              "%dx%d AppFont numa area de %dx%d px"
+              % (fit_w, fit_h, area.Width, area.Height))
+
         check("preview leaves no PDF behind in the temp directory",
               not [n for n in os.listdir(tempfile.gettempdir())
                    if n.startswith("signdocs-preview-")])

@@ -27,6 +27,7 @@ from signdocs.ui.widgets import (
     ROW,
     Dialog,
     copy_to_clipboard,
+    fit_to_screen,
     parent_window,
     pick_file,
 )
@@ -925,7 +926,12 @@ def preview_dialog(ctx, frame, s, document):
         return
     state = {"page": 0}
 
-    width, height = 300, 420
+    # Ask for a large window, then take what the screen can actually show. A
+    # fixed 420 was taller than a 1200-pixel display once the office's scaling
+    # was applied, which put the counter and both page buttons below the bottom
+    # edge — so a four-page document looked like a one-page document with no
+    # way to turn the page.
+    width, height = fit_to_screen(ctx, 300, 400)
     dialog = Dialog(ctx, s("preview_title"), width, height)
     inner = width - 2 * MARGIN
 

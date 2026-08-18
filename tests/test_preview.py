@@ -127,3 +127,28 @@ def test_a_missing_content_key_does_not_crash():
         assert False, "should have raised"
     except preview.PreviewUnavailable:
         pass
+
+
+# ---------------------------------------------------- dialog fits the screen
+def test_a_dialog_never_asks_for_more_than_the_fallback_when_unmeasurable():
+    """
+    The bug this guards: a fixed 420-unit-tall preview came to 1344 pixels once
+    the office's scaling was applied, so the page counter and both page buttons
+    fell below a 1200-pixel screen. A four-page document then looked like a
+    one-page document, because the only way to turn the page was off-screen.
+    """
+    from signdocs.ui import widgets
+
+    # A context that cannot answer: the fallback has to be small enough for a
+    # 768-pixel display, which is the smallest anyone realistically runs.
+    w, h = widgets.fit_to_screen(FakeCtx(raiser=RuntimeError("sem toolkit")),
+                                 300, 400)
+    assert (w, h) <= widgets.FALLBACK_MAX
+    assert h <= widgets.FALLBACK_MAX[1]
+
+
+def test_fit_to_screen_never_enlarges_what_was_asked_for():
+    from signdocs.ui import widgets
+
+    w, h = widgets.fit_to_screen(FakeCtx(raiser=RuntimeError("x")), 120, 90)
+    assert (w, h) == (120, 90)

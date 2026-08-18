@@ -209,6 +209,61 @@ class Dialog(object):
             pass
 
 
+#: Fraction of the screen's work area a dialog may occupy. Leaves room for the
+#: window decoration the office draws outside the dialog's own size.
+SCREEN_FRACTION = 0.85
+
+#: Used when the screen cannot be measured. Chosen to fit a 768-pixel-tall
+#: display at the densest scaling seen in practice, because being too small is
+#: a cramped dialog and being too large is buttons nobody can reach.
+FALLBACK_MAX = (260, 200)
+
+
+def fit_to_screen(ctx, width, height):
+    """
+    Shrink a wanted dialog size to something that fits on this screen.
+
+    Sizes here are map-AppFont units, and the pixels they come to depend on the
+    screen's scaling — the same 420-tall dialog is comfortable on one machine
+    and taller than the display on another. Ours was the second: the buttons
+    and the page counter sat below the bottom edge, so a multi-page preview had
+    no reachable way to turn the page and looked like it only had one.
+
+    Measured rather than guessed: the toolkit reports the work area in pixels
+    and the dialog converts pixels to AppFont, so this asks both instead of
+    assuming a ratio. Falls back to a conservative cap if either is
+    unavailable, since a headless or unusual display must not stop a dialog
+    opening at all.
+    """
+    try:
+        smgr = ctx.ServiceManager
+        toolkit = smgr.createInstanceWithContext("com.sun.star.awt.Toolkit", ctx)
+        area = toolkit.getWorkArea()
+
+        model = smgr.createInstanceWithContext(
+            "com.sun.star.awt.UnoControlDialogModel", ctx)
+        model.Width, model.Height = 100, 100
+        probe = smgr.createInstanceWithContext(
+            "com.sun.star.awt.UnoControlDialog", ctx)
+        probe.setModel(model)
+        probe.createPeer(toolkit, None)
+        try:
+            import uno
+            size = uno.createUnoStruct("com.sun.star.awt.Size")
+            size.Width = int(area.Width * SCREEN_FRACTION)
+            size.Height = int(area.Height * SCREEN_FRACTION)
+            logic = probe.convertSizeToLogic(size, 6)   # 6 = MeasureUnit.APPFONT
+            max_w, max_h = logic.Width, logic.Height
+        finally:
+            probe.dispose()
+        if max_w < 40 or max_h < 40:
+            raise ValueError("implausible work area")
+    except Exception:
+        max_w, max_h = FALLBACK_MAX
+
+    return min(width, max_w), min(height, max_h)
+
+
 def pick_file(ctx, title, patterns=()):
     """
     Ask for a file with the office's own dialog. Returns a path, or None.
