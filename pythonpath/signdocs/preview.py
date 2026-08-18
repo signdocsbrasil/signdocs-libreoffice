@@ -41,13 +41,16 @@ import base64
 import os
 import tempfile
 
-#: Rendered width. Enough that body text is legible on a HiDPI screen without
-#: making the PNG large enough to feel slow to build for a long document.
-RENDER_WIDTH_PX = 1000
+#: Longest edge of a rendered page. Applied to whichever edge is longer so a
+#: landscape page is not squeezed into portrait — forcing both dimensions
+#: stretched every Calc and Impress export, which are routinely landscape.
+RENDER_LONG_EDGE_PX = 1400
 
-#: A4 is 1:√2; the height only bounds the export, and the importer keeps the
-#: page's own aspect ratio inside it.
-RENDER_HEIGHT_PX = 1414
+#: Pages rendered in one pass. A preview exists to catch a wrong export, and
+#: that is visible in the first pages; rendering a 200-page contract in full
+#: would stall the dialog for no added confidence. The dialog says when it has
+#: stopped short rather than pretending the document ends here.
+MAX_PAGES = 25
 
 
 class PreviewUnavailable(Exception):
@@ -73,16 +76,21 @@ def _drain(pipe):
     return b"".join(chunks)
 
 
-def render(ctx, document, page_index=0):
+def render_all(ctx, document, limit=MAX_PAGES):
     """
-    Render one page of `document` (the dict `intake.export_pdf` returns).
+    Render up to `limit` pages, importing the PDF exactly once.
 
-    Returns `(graphic, page_count)`. `page_index` is clamped into range rather
-    than raising, because the caller's page number and the document's real
-    length can disagree only by being asked at different moments.
+    Returns `(graphics, page_count)` — `graphics` is a list of XGraphic, one per
+    rendered page, and `page_count` is how many pages the document really has,
+    which may be larger.
 
-    Blocking and slow — the office parses the whole PDF to answer. Worker
-    thread only, never the office's dispatch thread.
+    One import for the whole document, not one per page. The previous shape
+    re-imported and re-parsed the entire PDF on every page turn, which is both
+    slow and pointless: the expensive half is the import. Paging then costs
+    nothing, so the dialog does not need a progress dialog nested inside its own
+    modal loop to turn a page.
+
+    Blocking and slow — worker thread only, never the office's dispatch thread.
     """
     import unohelper
 
@@ -116,22 +124,13 @@ def render(ctx, document, page_index=0):
         count = pages.Count
         if count < 1:
             raise PreviewUnavailable("O PDF exportado não tem páginas.")
-        index = max(0, min(int(page_index), count - 1))
 
-        pipe = smgr.createInstanceWithContext("com.sun.star.io.Pipe", ctx)
-        exporter = smgr.createInstanceWithContext(
-            "com.sun.star.drawing.GraphicExportFilter", ctx)
-        exporter.setSourceDocument(pages.getByIndex(index))
-        exporter.filter((
-            _prop(ctx, "FilterName", "PNG"),
-            _prop(ctx, "OutputStream", pipe),
-            _prop(ctx, "FilterData", _size_filter_data(ctx)),
-        ))
-        png = _drain(pipe)
-        if not png.startswith(b"\x89PNG"):
-            raise PreviewUnavailable("A página não pôde ser convertida em imagem.")
-
-        return _graphic_from_png(ctx, png), count
+        graphics = []
+        for index in range(min(count, max(1, int(limit)))):
+            page = pages.getByIndex(index)
+            png = _page_png(ctx, smgr, page)
+            graphics.append(_graphic_from_png(ctx, png))
+        return graphics, count
     finally:
         # Close before unlinking: the importer holds the file open, and on
         # Windows a delete underneath it fails outright.
@@ -146,11 +145,45 @@ def render(ctx, document, page_index=0):
             pass
 
 
-def _size_filter_data(ctx):
+def _page_png(ctx, smgr, page):
+    """One page to PNG bytes, at the page's own proportions."""
+    pipe = smgr.createInstanceWithContext("com.sun.star.io.Pipe", ctx)
+    exporter = smgr.createInstanceWithContext(
+        "com.sun.star.drawing.GraphicExportFilter", ctx)
+    exporter.setSourceDocument(page)
+    exporter.filter((
+        _prop(ctx, "FilterName", "PNG"),
+        _prop(ctx, "OutputStream", pipe),
+        _prop(ctx, "FilterData", _size_filter_data(ctx, page)),
+    ))
+    png = _drain(pipe)
+    if not png.startswith(b"\x89PNG"):
+        raise PreviewUnavailable("A página não pôde ser convertida em imagem.")
+    return png
+
+
+def _size_filter_data(ctx, page):
+    """
+    Pixel size for this page, keeping its own proportions.
+
+    `page.Width`/`page.Height` are in 1/100 mm and describe the real page, so
+    the ratio comes from the document rather than from an assumption about A4.
+    Setting both dimensions to fixed values — which this used to do — stretches
+    anything that is not portrait A4, and Calc and Impress export landscape as
+    a matter of course.
+    """
     import uno
+    width = int(getattr(page, "Width", 0)) or 21000
+    height = int(getattr(page, "Height", 0)) or 29700
+    if width >= height:
+        px_w = RENDER_LONG_EDGE_PX
+        px_h = max(1, int(round(RENDER_LONG_EDGE_PX * height / float(width))))
+    else:
+        px_h = RENDER_LONG_EDGE_PX
+        px_w = max(1, int(round(RENDER_LONG_EDGE_PX * width / float(height))))
     return uno.Any("[]com.sun.star.beans.PropertyValue", (
-        _prop(ctx, "PixelWidth", RENDER_WIDTH_PX),
-        _prop(ctx, "PixelHeight", RENDER_HEIGHT_PX),
+        _prop(ctx, "PixelWidth", px_w),
+        _prop(ctx, "PixelHeight", px_h),
     ))
 
 

@@ -485,18 +485,37 @@ def main():
 
             pdf_doc = desktop.loadComponentFromURL(
                 "private:factory/swriter", "_blank", 0, (_p("Hidden", True),))
-            pdf_doc.Text.setString("Contrato de teste para a pre-visualizacao.")
+            # Three pages with visibly different content. One page proves the
+            # importer works; only several prove that page N renders page N,
+            # which is the thing that was broken.
+            cursor = pdf_doc.Text.createTextCursor()
+            for n in (1, 2, 3):
+                pdf_doc.Text.insertString(
+                    cursor, "PAGINA %d %s" % (n, str(n) * 60), False)
+                if n < 3:
+                    pdf_doc.Text.insertControlCharacter(cursor, 0, False)
+                    cursor.BreakType = uno.Enum(
+                        "com.sun.star.style.BreakType", "PAGE_BEFORE")
             exported = intake.export_pdf(pdf_doc)
-            check("export produced a PDF for the preview",
+            check("export produced a multi-page PDF for the preview",
                   exported["content"].startswith("JVBER"))
 
-            graphic, pages = sd_preview.render(ctx, exported, 0)
-            check("preview rendered page 1 of the exported PDF",
-                  graphic is not None and pages >= 1, "%d pagina(s)" % pages)
-            # Out-of-range must clamp, not raise: the caller's page number and
-            # the document's length are read at different moments.
-            g2, _ = sd_preview.render(ctx, exported, 999)
-            check("an out-of-range page clamps instead of raising", g2 is not None)
+            graphics, pages = sd_preview.render_all(ctx, exported)
+            check("preview reports every page of the document",
+                  pages == 3, "%d" % pages)
+            check("preview renders one graphic per page",
+                  len(graphics) == 3, "%d graphic(s)" % len(graphics))
+            # Distinct sizes-in-pixels would not prove much; distinct bitmaps
+            # would, but XGraphic does not expose bytes cheaply. Identity is
+            # enough to catch the failure that mattered: the same page object
+            # handed back for every index.
+            check("each page is a distinct graphic",
+                  len({id(g) for g in graphics}) == len(graphics))
+
+            capped, total = sd_preview.render_all(ctx, exported, limit=2)
+            check("the page cap limits rendering, not the reported length",
+                  len(capped) == 2 and total == 3,
+                  "%d renderizadas de %d" % (len(capped), total))
         except sd_preview.PreviewUnavailable as exc:
             # A build without the PDF import filter is a legitimate
             # environment, not a failed test — the feature degrades by design.

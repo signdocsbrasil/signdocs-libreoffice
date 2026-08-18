@@ -901,26 +901,30 @@ def preview_dialog(ctx, frame, s, document):
     the time the invitations are out, the quota is spent and the links are in
     other people's inboxes.
 
-    Rendering is slow enough to notice, so every page goes through `busy()` on
-    a worker thread. Never the office's dispatch thread: the office parses the
-    whole PDF to answer, and a frozen Writer is how that reads to a user.
+    Every page is rendered up front, in one import, behind a single `busy()`.
+    Turning a page then costs nothing. The first version rendered on demand and
+    so called `busy()` — itself a modal dialog — from inside this dialog's own
+    modal loop, once per page turn. One import per page also meant re-parsing
+    the whole document to move forward by one.
     """
-    state = {"page": 0, "count": 1}
-
-    first = busy(ctx, parent_window(frame), s("preview_building"),
-                 lambda: preview.render(ctx, document, 0))
-    if first is None:
+    rendered = busy(ctx, parent_window(frame), s("preview_building"),
+                    lambda: preview.render_all(ctx, document))
+    if rendered is None:
         return                      # dismissed while rendering
-    if not first.ok:
+    if not rendered.ok:
         # Not fatal, and said so: a missing PDF importer must not read as a
         # failed send. The caller returns to the review screen unchanged.
         msgbox.error(ctx, frame,
-                     s("preview_unavailable") % (str(first.error) or "?"),
+                     s("preview_unavailable") % (str(rendered.error) or "?"),
                      s("app"))
         return
-    graphic, state["count"] = first.value
 
-    # Portrait, sized so an A4 page is legible without a scrollable dialog.
+    graphics, count = rendered.value
+    if not graphics:
+        msgbox.error(ctx, frame, s("preview_unavailable") % "0", s("app"))
+        return
+    state = {"page": 0}
+
     width, height = 300, 420
     dialog = Dialog(ctx, s("preview_title"), width, height)
     inner = width - 2 * MARGIN
@@ -928,41 +932,37 @@ def preview_dialog(ctx, frame, s, document):
     image = dialog._add("UnoControlImageControlModel", "page",
                         MARGIN, MARGIN, inner, height - 44,
                         ScaleImage=True, Border=1)
-    image.Graphic = graphic
-    dialog.label("counter", MARGIN, height - 32, inner, 10,
-                 s("preview_page") % (1, state["count"]))
+    image.Graphic = graphics[0]
+    dialog.label("counter", MARGIN, height - 32, inner, 10, "")
 
-    def show_page(delta):
+    def refresh():
+        page = state["page"]
+        image.Graphic = graphics[page]
+        # Counts what the document has, not what was rendered, so a truncated
+        # preview cannot read as a shorter document than the one being sent.
+        label = s("preview_page") % (page + 1, count)
+        if len(graphics) < count:
+            label += "  " + s("preview_truncated") % len(graphics)
+        dialog.set_label("counter", label)
+        dialog.enable("prev", page > 0)
+        dialog.enable("next", page < len(graphics) - 1)
+
+    def move(delta):
         target = state["page"] + delta
-        if target < 0 or target >= state["count"]:
-            return
-        result = busy(ctx, parent_window(frame), s("preview_building"),
-                      lambda: preview.render(ctx, document, target))
-        if result is None or not result.ok:
-            # Page 1 already rendered, so a later failure is transient rather
-            # than structural. Keep the page that works on screen.
-            return
-        state["page"] = target
-        image.Graphic = result.value[0]
-        dialog.set_label("counter", s("preview_page") % (target + 1, state["count"]))
-        _sync_pages(dialog, state)
+        if 0 <= target < len(graphics):
+            state["page"] = target
+            refresh()
 
     y = height - BUTTON_H - MARGIN + 2
     dialog.button("prev", MARGIN, y, BUTTON_W, BUTTON_H, s("preview_prev"),
-                  lambda: show_page(-1))
+                  lambda: move(-1))
     dialog.button("next", MARGIN + BUTTON_W + 4, y, BUTTON_W, BUTTON_H,
-                  s("preview_next"), lambda: show_page(1))
+                  s("preview_next"), lambda: move(1))
     dialog.button("close", width - BUTTON_W - MARGIN, y, BUTTON_W, BUTTON_H,
                   s("close"), lambda: dialog.finish(True))
-    _sync_pages(dialog, state)
+    refresh()
 
     dialog.show(parent_window(frame))
-
-
-def _sync_pages(dialog, state):
-    """Grey out a move with nowhere to go, as the signer list does."""
-    dialog.enable("prev", state["page"] > 0)
-    dialog.enable("next", state["page"] < state["count"] - 1)
 
 
 # ----------------------------------------------------------- review dialog

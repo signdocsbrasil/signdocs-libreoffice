@@ -41,7 +41,7 @@ class FakeCtx(object):
 def test_a_document_that_is_not_base64_is_refused():
     before = leftovers()
     try:
-        preview.render(FakeCtx(), {"content": "!!! não é base64 !!!"})
+        preview.render_all(FakeCtx(), {"content": "!!! não é base64 !!!"})
         assert False, "should have raised"
     except preview.PreviewUnavailable as exc:
         assert "não pôde ser lido" in str(exc)
@@ -58,8 +58,8 @@ def test_the_temp_pdf_never_outlives_a_failed_render():
     """
     before = set(leftovers())
     try:
-        preview.render(FakeCtx(raiser=RuntimeError("sem escritório")),
-                       {"content": "JVBERi0xLjQK"})
+        preview.render_all(FakeCtx(raiser=RuntimeError("sem escritório")),
+                           {"content": "JVBERi0xLjQK"})
     except Exception:
         pass
     assert set(leftovers()) - before == set()
@@ -69,8 +69,8 @@ def test_failure_is_catchable_rather_than_fatal():
     # A preview is a convenience. Whatever goes wrong, the caller has to be
     # able to carry on and send — so the module raises one known type.
     try:
-        preview.render(FakeCtx(raiser=RuntimeError("boom")),
-                       {"content": "JVBERi0xLjQK"})
+        preview.render_all(FakeCtx(raiser=RuntimeError("boom")),
+                           {"content": "JVBERi0xLjQK"})
         raised = None
     except Exception as exc:
         raised = exc
@@ -78,16 +78,52 @@ def test_failure_is_catchable_rather_than_fatal():
     assert isinstance(raised, (preview.PreviewUnavailable, RuntimeError))
 
 
-def test_render_dimensions_keep_a4_proportions():
-    # The height only bounds the export; getting the ratio wrong would letterbox
-    # every page in the dialog.
-    ratio = preview.RENDER_HEIGHT_PX / preview.RENDER_WIDTH_PX
-    assert 1.40 < ratio < 1.43, ratio
+class FakePage(object):
+    def __init__(self, w, h):
+        self.Width, self.Height = w, h
+
+
+def pixels_for(w, h):
+    """The PixelWidth/PixelHeight the exporter would be given for this page."""
+    data = preview._size_filter_data(FakeCtx(), FakePage(w, h))
+    # uno.Any wraps the tuple; the fake ctx returns plain PropertyValue-likes.
+    values = data.value if hasattr(data, "value") else data
+    return {p.Name: p.Value for p in values}
+
+
+def test_a_portrait_page_keeps_its_proportions():
+    px = pixels_for(21000, 29700)          # A4 retrato
+    assert px["PixelHeight"] == preview.RENDER_LONG_EDGE_PX
+    assert abs(px["PixelWidth"] / px["PixelHeight"] - 21000 / 29700) < 0.01
+
+
+def test_a_landscape_page_is_not_squeezed_into_portrait():
+    """
+    The bug this replaced: both dimensions were pinned, so every landscape
+    page — which is what Calc and Impress export by default — was stretched
+    into portrait. A distorted preview is worse than none, because it looks
+    like the export itself is wrong.
+    """
+    px = pixels_for(29700, 21000)          # A4 paisagem
+    assert px["PixelWidth"] == preview.RENDER_LONG_EDGE_PX
+    assert px["PixelWidth"] > px["PixelHeight"]
+    assert abs(px["PixelWidth"] / px["PixelHeight"] - 29700 / 21000) < 0.01
+
+
+def test_a_page_with_no_size_falls_back_to_a4_rather_than_dividing_by_zero():
+    px = pixels_for(0, 0)
+    assert px["PixelWidth"] > 0 and px["PixelHeight"] > 0
+
+
+def test_the_page_cap_is_a_cap_not_a_page_count():
+    # The dialog reports the document's real length and says separately how
+    # much it rendered, so a long contract cannot look short.
+    assert preview.MAX_PAGES >= 10
 
 
 def test_a_missing_content_key_does_not_crash():
     try:
-        preview.render(FakeCtx(), {})
+        preview.render_all(FakeCtx(), {})
         assert False, "should have raised"
     except preview.PreviewUnavailable:
         pass

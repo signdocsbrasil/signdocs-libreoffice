@@ -245,6 +245,11 @@ _STRINGS = {
                       "es": "Revisar el documento"},
     "preview_page": {"pt": "Página %d de %d", "en": "Page %d of %d",
                      "es": "Página %d de %d"},
+    # Says how many pages were rendered, never how many the document has —
+    # a preview that stops short must not read as a shorter document.
+    "preview_truncated": {"pt": "(pré-visualização: %d primeiras)",
+                          "en": "(preview: first %d)",
+                          "es": "(vista previa: %d primeras)"},
     "preview_prev": {"pt": "Anterior", "en": "Previous", "es": "Anterior"},
     "preview_next": {"pt": "Próxima", "en": "Next", "es": "Siguiente"},
     "preview_building": {"pt": "Preparando a visualização...",
