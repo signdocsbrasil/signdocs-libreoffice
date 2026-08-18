@@ -212,13 +212,13 @@ class Dialog(object):
 #: Share of the screen's work area a large dialog should take. Big enough that
 #: a document page is worth looking at, short of the edges so the window
 #: decoration and any panel still fit.
-SCREEN_FRACTION = 0.7
+SCREEN_FRACTION = 0.82
 
 #: Bounds in map-AppFont units. The floor keeps the dialog usable if the screen
 #: measures implausibly small; the ceiling stops it sprawling on a very large
 #: monitor, where a page blown up to 2000 units tall is no easier to read.
 MIN_SIZE = (240, 200)
-MAX_SIZE = (560, 620)
+MAX_SIZE = (620, 700)
 
 
 def screen_sized(ctx, fraction=SCREEN_FRACTION,

@@ -891,6 +891,21 @@ def _sync_move_buttons(dialog, state):
 
 
 # ---------------------------------------------------------- preview dialog
+def page_box(max_w, max_h, page_w, page_h):
+    """
+    The largest box inside `max_w` x `max_h` with the page's proportions.
+
+    Falls back to the whole area when the page reports no size, which is no
+    worse than before and never returns something with a zero edge.
+    """
+    if page_w > 0 and page_h > 0:
+        ratio = float(page_h) / float(page_w)
+        box_h = min(max_h, int(round(max_w * ratio)))
+        box_w = min(max_w, int(round(box_h / ratio)) if ratio else max_w)
+        return max(1, box_w), max(1, box_h)
+    return max_w, max_h
+
+
 def preview_dialog(ctx, frame, s, document):
     """
     Show the exported PDF, a page at a time.
@@ -933,10 +948,23 @@ def preview_dialog(ctx, frame, s, document):
     width, height = screen_sized(ctx)
     dialog = Dialog(ctx, s("preview_title"), width, height)
     inner = width - 2 * MARGIN
+    avail_h = height - 44
+
+    # The control is shaped to the page, and the page is scaled isotropically
+    # into it. Either alone is not enough: `ScaleImage=True` means *aniso*
+    # tropic, which stretched an A4 page sideways to fill a near-square
+    # control, and isotropic scaling on its own would letterbox it instead —
+    # correct, but wasting half the dialog.
+    size = getattr(graphics[0], "SizePixel", None)
+    box_w, box_h = page_box(inner, avail_h,
+                            getattr(size, "Width", 0) if size else 0,
+                            getattr(size, "Height", 0) if size else 0)
 
     image = dialog._add("UnoControlImageControlModel", "page",
-                        MARGIN, MARGIN, inner, height - 44,
-                        ScaleImage=True, Border=1)
+                        MARGIN + (inner - box_w) // 2, MARGIN, box_w, box_h,
+                        # 1 = ImageScaleMode.ISOTROPIC. Keeps the page's own
+                        # proportions whatever the control ends up being.
+                        ScaleMode=1, Border=1)
     image.Graphic = graphics[0]
     dialog.label("counter", MARGIN, height - 32, inner, 10, "")
 

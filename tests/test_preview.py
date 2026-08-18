@@ -158,3 +158,40 @@ def test_the_floor_leaves_room_for_a_page_and_its_controls():
     from signdocs.ui import widgets
 
     assert widgets.MIN_SIZE[1] - 44 >= 150
+
+
+# ------------------------------------------------------- page proportions
+def test_a_portrait_page_is_not_stretched_sideways():
+    """
+    The bug: the image control was near-square and the page was scaled
+    anisotropically into it, so an A4 page came out 1.53 wide-to-tall when it
+    should be 0.707 — visibly squashed against the same document opened in
+    Draw.
+    """
+    from signdocs.ui.dialogs import page_box
+
+    w, h = page_box(544, 519, 1000, 1414)          # A4 retrato
+    assert h > w, (w, h)
+    assert abs((h / w) - (1414 / 1000)) < 0.02
+
+
+def test_a_landscape_page_keeps_its_proportions_too():
+    from signdocs.ui.dialogs import page_box
+
+    w, h = page_box(544, 519, 1414, 1000)
+    assert w > h, (w, h)
+    assert abs((h / w) - (1000 / 1414)) < 0.02
+
+
+def test_the_box_never_exceeds_the_space_available():
+    from signdocs.ui.dialogs import page_box
+
+    for pw, ph in ((1000, 1414), (1414, 1000), (1000, 1000), (100, 5000)):
+        w, h = page_box(544, 519, pw, ph)
+        assert 0 < w <= 544 and 0 < h <= 519, (pw, ph, w, h)
+
+
+def test_a_page_with_no_reported_size_uses_the_whole_area():
+    from signdocs.ui.dialogs import page_box
+
+    assert page_box(544, 519, 0, 0) == (544, 519)
