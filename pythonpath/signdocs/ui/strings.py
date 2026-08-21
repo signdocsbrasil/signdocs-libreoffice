@@ -443,6 +443,20 @@ _STRINGS = {
     "per_year": {"pt": "/ano", "en": "/year", "es": "/año"},
     # The whole allowance, not a monthly rate: annual billing hands over the
     # twelve months at once, which is the reason to choose it.
+    "plan_change_in_app": {
+        "pt": "Você já tem um plano ativo. Para trocar de plano, use o "
+              "aplicativo SignDocs em https://app.signdocs.com.br — assim a "
+              "mudança é feita na assinatura que você já tem, com o valor "
+              "proporcional calculado, em vez de abrir uma segunda assinatura.",
+        "en": "You already have an active plan. To change plans, use the "
+              "SignDocs app at https://app.signdocs.com.br — that way the "
+              "change is applied to the subscription you already have, "
+              "prorated, instead of opening a second one.",
+        "es": "Ya tienes un plan activo. Para cambiar de plan, usa la "
+              "aplicación SignDocs en https://app.signdocs.com.br — así el "
+              "cambio se aplica a la suscripción que ya tienes, con prorrateo, "
+              "en lugar de abrir una segunda.",
+    },
     "plan_row_annual": {"pt": "%s — %d documentos no período — %s",
                         "en": "%s — %d documents for the period — %s",
                         "es": "%s — %d documentos en el período — %s"},
@@ -607,6 +621,27 @@ def is_advanced_plan(plan):
     normalised = unicodedata.normalize("NFD", plan or "")
     stripped = "".join(c for c in normalised if unicodedata.category(c) != "Mn")
     return stripped.upper().startswith("AVANCADO")
+
+
+def is_paid_plan(plan):
+    """
+    Whether a plan name is one of the paid tiers.
+
+    Normalised the same way as `is_advanced_plan`, so an accent or a stray case
+    cannot make the two disagree about one string.
+
+    Deliberately conservative in the opposite direction to `is_advanced_plan`:
+    an empty or unrecognised name reads as NOT paid, so the plan picker is
+    still offered. The server is the authority — it answers 409 with
+    `PLAN_CHANGE_IN_APP` — so guessing wrong here costs one refused round trip,
+    whereas hiding the picker from someone who genuinely needs to buy leaves
+    them with no way to pay at all.
+    """
+    import unicodedata
+    normalised = unicodedata.normalize("NFD", plan or "")
+    stripped = "".join(c for c in normalised if unicodedata.category(c) != "Mn")
+    upper = stripped.upper().strip()
+    return upper.startswith("INICIANTE") or upper.startswith("AVANCADO")
 
 
 def signer_line(s, signer, is_you=False):

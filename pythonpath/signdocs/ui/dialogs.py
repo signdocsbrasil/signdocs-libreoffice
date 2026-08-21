@@ -439,7 +439,7 @@ def fiscal_dialog(ctx, frame, s):
     return dialog.show(parent_window(frame))
 
 
-def run_upgrade(ctx, frame, store, s, stage):
+def run_upgrade(ctx, frame, store, s, stage, state=None):
     """
     Pick a plan, then hand off to Stripe in the browser.
 
@@ -451,6 +451,25 @@ def run_upgrade(ctx, frame, store, s, stage):
     window can say "sem envios disponíveis" and offer nothing further, while a
     Drive user in the same position gets a plan picker.
     """
+    # Someone who already pays must not open a SECOND subscription from here.
+    # Channel checkout only ever creates a new one, and nothing downstream
+    # reconciles that against the subscription they already have — the app's
+    # own plan change does, on the existing subscription and with proration.
+    #
+    # The enforceable gate is the server's (409 `PLAN_CHANGE_IN_APP`): this
+    # module is public and the endpoint takes any valid token, so a check here
+    # secures nothing. It exists so nobody is walked through a picker, and a
+    # fiscal form, only to be refused at the end.
+    #
+    # `state` is optional and an unreadable plan falls through to the picker,
+    # matching `_plan_allows_import`: the server decides either way, and the
+    # cost of guessing wrong is a wasted round trip rather than a user with no
+    # way to pay.
+    current_plan = (((state or {}).get("quota") or {}).get("user") or {}).get("plan")
+    if strings.is_paid_plan(current_plan):
+        msgbox.info(ctx, frame, s("plan_change_in_app"), s("app"))
+        return
+
     width = 300
     height = 156
     dialog = Dialog(ctx, s("upgrade_title"), width, height)
@@ -583,7 +602,7 @@ def send_dialog(ctx, frame, store, s, state):
                 "upgrade", width - BUTTON_W - MARGIN, MARGIN - 2, BUTTON_W,
                 BUTTON_H - 2, s("upgrade"),
                 lambda: run_upgrade(ctx, frame, store, s,
-                                    config.current_stage(store)))
+                                    config.current_stage(store), state))
 
     top = MARGIN + quota_h
     # Shown, not editable. The server sets `owner` from the verified identity
@@ -800,7 +819,8 @@ def _import_signers(ctx, frame, store, s, dialog, state):
         # end: the answer to "your plan does not include this" is the page
         # where that changes.
         if msgbox.confirm(ctx, frame, s("import_needs_plan"), s("app")):
-            run_upgrade(ctx, frame, store, s, config.current_stage(store))
+            run_upgrade(ctx, frame, store, s, config.current_stage(store),
+                        state)
         return
 
     path = pick_file(ctx, s("import_title"),

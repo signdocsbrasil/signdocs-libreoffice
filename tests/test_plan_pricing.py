@@ -129,3 +129,54 @@ def test_the_limit_still_comes_from_the_server_not_the_plan_name():
                       "remaining": 2, "source": "shared_free_pool"},
             "user": {"plan": "Gratuito"}}
     assert "1/3" in strings.quota_line(s, info)
+
+
+# ------------------------------------------------- who may open a checkout
+#
+# Channel checkout only ever opens a NEW subscription, so it is for people who
+# do not have one. `is_paid_plan` is what keeps the extension from walking an
+# existing subscriber through a picker the server will refuse with 409
+# PLAN_CHANGE_IN_APP.
+#
+# The direction that matters most is the false positive: reading a free or
+# unknown account as paid hides the only way to pay, and nothing would fail
+# loudly — the picker would just never appear.
+
+def test_every_sellable_plan_reads_as_paid():
+    from signdocs.ui import strings
+    # The same four names external-api's create-checkout accepts in VALID_PLANS.
+    for plan in ("Iniciante 20", "Iniciante 80", "Avançado 80", "Avançado 200"):
+        assert strings.is_paid_plan(plan), plan
+
+
+def test_a_free_account_is_not_paid_so_it_still_gets_the_picker():
+    from signdocs.ui import strings
+    assert not strings.is_paid_plan("Gratuito")
+
+
+def test_an_unknown_or_missing_plan_falls_through_to_the_picker():
+    """
+    Deliberately the opposite default to is_advanced_plan. An unreadable plan
+    must not hide the only route to paying — the server refuses if we guessed
+    wrong, and a wasted round trip is cheaper than a user who cannot buy.
+    """
+    from signdocs.ui import strings
+    for plan in (None, "", "   ", "Plano Que Nao Existe"):
+        assert not strings.is_paid_plan(plan), repr(plan)
+
+
+def test_accents_and_case_cannot_split_one_plan_in_two():
+    from signdocs.ui import strings
+    # Mirrors is_advanced_plan's normalisation, so the two cannot disagree
+    # about a single string.
+    for plan in ("AVANCADO 200", "avançado 200", "  Avançado 200  ",
+                 "INICIANTE 20", "iniciante 20"):
+        assert strings.is_paid_plan(plan), plan
+
+
+def test_the_refusal_names_the_app_in_every_language():
+    from signdocs.ui import strings
+    # A dead end is the failure being fixed; the message has to say where to go.
+    for lang in ("pt", "en", "es"):
+        text = strings.Strings(lang)("plan_change_in_app")
+        assert "app.signdocs.com.br" in text, lang

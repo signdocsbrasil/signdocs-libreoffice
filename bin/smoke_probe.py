@@ -234,6 +234,7 @@ def main():
     # nothing blocks on a modal loop in a headless office.
     from signdocs.store import JsonStore  # noqa: E402
     from signdocs.ui import dialogs as ui_dialogs  # noqa: E402
+    from signdocs.ui import msgbox as ui_msgbox  # noqa: E402
     from signdocs.ui import strings as ui_strings  # noqa: E402
     from signdocs.ui import widgets  # noqa: E402
 
@@ -334,7 +335,44 @@ def main():
         check("consent dialog offers a way to read each policy",
               "open0" in consent_controls and "open1" in consent_controls)
 
-        ui_dialogs.run_upgrade(ctx, None, store, s, "hml")
+        # -- who is offered the plan picker -------------------------------
+        #
+        # Channel checkout only ever opens a NEW subscription, so an existing
+        # subscriber must be sent to the app instead. The enforceable gate is
+        # the server's 409; this proves the extension does not walk someone
+        # through a picker and a fiscal form only to be refused at the end.
+        #
+        # Asserting the dialog merely builds would pass identically against a
+        # build with no fence at all, so both directions are checked — and the
+        # free direction is the one that fails silently, because a picker that
+        # never appears leaves no error behind, just an account that cannot buy.
+        shown = []
+        real_info = ui_msgbox.info
+        ui_msgbox.info = lambda c, f, text, title=None: shown.append(text)
+        try:
+            paid = {"quota": {"user": {"plan": "Avançado 80"}}}
+            built.pop(s("upgrade_title"), None)
+            ui_dialogs.run_upgrade(ctx, None, store, s, "hml", paid)
+            check("an existing subscriber is not offered the plan picker",
+                  s("upgrade_title") not in built)
+            check("and is told where the plan is actually changed",
+                  bool(shown) and "app.signdocs.com.br" in shown[-1],
+                  (shown[-1] if shown else "nenhuma mensagem")[:60])
+
+            shown[:] = []
+            free = {"quota": {"user": {"plan": "Gratuito"}}}
+            ui_dialogs.run_upgrade(ctx, None, store, s, "hml", free)
+            check("a free account still reaches the plan picker",
+                  s("upgrade_title") in built)
+
+            # No state at all is the probe's own earlier call and the case a
+            # failed init-session produces. It must not hide the picker.
+            built.pop(s("upgrade_title"), None)
+            ui_dialogs.run_upgrade(ctx, None, store, s, "hml")
+            check("an unreadable plan falls through to the picker",
+                  s("upgrade_title") in built)
+        finally:
+            ui_msgbox.info = real_info
         # -- prices follow the billing period -----------------------------
         # The list quoted monthly prices next to "Anual": the number the user
         # is about to be charged, wrong by a factor of twelve, in the
