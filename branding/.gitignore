@@ -1,0 +1,7 @@
+# Raw captures stay local. They show the signed-in account's real address in the
+# "Remetente" line, and a listing image is public and permanent. Only the
+# redacted set under listagem/ is committed.
+Captura de tela*.png
+Screenshot*.png
+*.odt#
+.~lock.*
