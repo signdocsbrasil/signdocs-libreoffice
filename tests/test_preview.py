@@ -11,14 +11,25 @@ catch rather than something that reaches the user as a broken send.
 """
 
 import glob
+import importlib.util
 import os
 import sys
 import tempfile
+
+import pytest
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pythonpath"))
 
 from signdocs import preview  # noqa: E402
+
+# `signdocs.ui.widgets` imports `uno` at module scope — allowed for the `ui`
+# package by design (see conftest) — so the handful of tests that reach into it
+# cannot run in a bare Python. Everything else here is uno-free on purpose and
+# runs everywhere, which is the point: the geometry is where the bugs were.
+needs_office = pytest.mark.skipif(
+    importlib.util.find_spec("uno") is None,
+    reason="precisa do bridge UNO do escritório")
 
 
 def leftovers():
@@ -85,10 +96,8 @@ class FakePage(object):
 
 def pixels_for(w, h):
     """The PixelWidth/PixelHeight the exporter would be given for this page."""
-    data = preview._size_filter_data(FakeCtx(), FakePage(w, h))
-    # uno.Any wraps the tuple; the fake ctx returns plain PropertyValue-likes.
-    values = data.value if hasattr(data, "value") else data
-    return {p.Name: p.Value for p in values}
+    px_w, px_h = preview.render_pixels(FakePage(w, h).Width, FakePage(w, h).Height)
+    return {"PixelWidth": px_w, "PixelHeight": px_h}
 
 
 def test_a_portrait_page_keeps_its_proportions():
@@ -130,6 +139,7 @@ def test_a_missing_content_key_does_not_crash():
 
 
 # ---------------------------------------------------- dialog fits the screen
+@needs_office
 def test_an_unmeasurable_screen_still_yields_a_usable_size():
     """
     Two bugs, one cause. A fixed 420-unit height came to 1344 pixels on a
@@ -144,6 +154,7 @@ def test_an_unmeasurable_screen_still_yields_a_usable_size():
     assert (w, h) == widgets.MIN_SIZE
 
 
+@needs_office
 def test_the_size_is_always_within_its_bounds():
     from signdocs.ui import widgets
 
@@ -152,6 +163,7 @@ def test_the_size_is_always_within_its_bounds():
     assert widgets.MIN_SIZE[1] <= h <= widgets.MAX_SIZE[1]
 
 
+@needs_office
 def test_the_floor_leaves_room_for_a_page_and_its_controls():
     # The image takes height - 44; below roughly 200 units there is no picture
     # left worth calling a preview.
@@ -168,30 +180,22 @@ def test_a_portrait_page_is_not_stretched_sideways():
     should be 0.707 — visibly squashed against the same document opened in
     Draw.
     """
-    from signdocs.ui.dialogs import page_box
-
-    w, h = page_box(544, 519, 1000, 1414)          # A4 retrato
+    w, h = preview.page_box(544, 519, 1000, 1414)          # A4 retrato
     assert h > w, (w, h)
     assert abs((h / w) - (1414 / 1000)) < 0.02
 
 
 def test_a_landscape_page_keeps_its_proportions_too():
-    from signdocs.ui.dialogs import page_box
-
-    w, h = page_box(544, 519, 1414, 1000)
+    w, h = preview.page_box(544, 519, 1414, 1000)
     assert w > h, (w, h)
     assert abs((h / w) - (1000 / 1414)) < 0.02
 
 
 def test_the_box_never_exceeds_the_space_available():
-    from signdocs.ui.dialogs import page_box
-
     for pw, ph in ((1000, 1414), (1414, 1000), (1000, 1000), (100, 5000)):
-        w, h = page_box(544, 519, pw, ph)
+        w, h = preview.page_box(544, 519, pw, ph)
         assert 0 < w <= 544 and 0 < h <= 519, (pw, ph, w, h)
 
 
 def test_a_page_with_no_reported_size_uses_the_whole_area():
-    from signdocs.ui.dialogs import page_box
-
-    assert page_box(544, 519, 0, 0) == (544, 519)
+    assert preview.page_box(544, 519, 0, 0) == (544, 519)

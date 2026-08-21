@@ -92,12 +92,24 @@ def render_all(ctx, document, limit=MAX_PAGES):
 
     Blocking and slow — worker thread only, never the office's dispatch thread.
     """
-    import unohelper
-
     try:
         raw = base64.b64decode(document["content"])
     except Exception:
         raise PreviewUnavailable("O PDF exportado não pôde ser lido.")
+
+    # Imported after the decode, not before: refusing a malformed payload is
+    # pure logic and must not depend on a live UNO bridge. `unohelper` exists
+    # only inside the office's own Python, so importing it first made the
+    # refusal path — and its tests — require a running office to reach.
+    #
+    # A missing bridge is reported as the preview being unavailable, which is
+    # what it is. Letting ImportError escape would make the one failure the
+    # caller is written to absorb arrive as a type it does not catch.
+    try:
+        import unohelper
+    except ImportError:
+        raise PreviewUnavailable(
+            "A pré-visualização não está disponível nesta instalação.")
 
     smgr = ctx.ServiceManager
     handle, path = tempfile.mkstemp(suffix=".pdf", prefix="signdocs-preview-")
@@ -173,18 +185,56 @@ def _size_filter_data(ctx, page):
     a matter of course.
     """
     import uno
-    width = int(getattr(page, "Width", 0)) or 21000
-    height = int(getattr(page, "Height", 0)) or 29700
+    px_w, px_h = render_pixels(getattr(page, "Width", 0), getattr(page, "Height", 0))
+    return uno.Any("[]com.sun.star.beans.PropertyValue", (
+        _prop(ctx, "PixelWidth", px_w),
+        _prop(ctx, "PixelHeight", px_h),
+    ))
+
+
+def render_pixels(width, height):
+    """
+    (PixelWidth, PixelHeight) for a page of `width` x `height` (1/100 mm).
+
+    Separate from `_size_filter_data` because this is the part that can be
+    wrong: the ratio arithmetic decides whether a landscape page comes out
+    landscape. Welded to the `uno.Any` call it could only be tested inside a
+    running office, so it was never checked by CI — which is exactly where a
+    silent regression to "pin both dimensions" would reappear.
+
+    A page reporting no size falls back to A4 rather than dividing by zero.
+    """
+    width = int(width) or 21000
+    height = int(height) or 29700
     if width >= height:
         px_w = RENDER_LONG_EDGE_PX
         px_h = max(1, int(round(RENDER_LONG_EDGE_PX * height / float(width))))
     else:
         px_h = RENDER_LONG_EDGE_PX
         px_w = max(1, int(round(RENDER_LONG_EDGE_PX * width / float(height))))
-    return uno.Any("[]com.sun.star.beans.PropertyValue", (
-        _prop(ctx, "PixelWidth", px_w),
-        _prop(ctx, "PixelHeight", px_h),
-    ))
+    return px_w, px_h
+
+
+def page_box(max_w, max_h, page_w, page_h):
+    """
+    The largest box inside `max_w` x `max_h` with the page's proportions.
+
+    Falls back to the whole area when the page reports no size, which is no
+    worse than before and never returns something with a zero edge.
+
+    Lives here rather than in `ui.dialogs` for the same reason as
+    `render_pixels`: it is pure geometry, and the `ui` package imports `uno` at
+    module scope, so anything inside it can only be tested with a live office.
+    This is the arithmetic that decides whether a page is drawn in proportion —
+    getting it wrong is what squashed A4 into a near-square control — so it
+    belongs where the test suite can actually reach it.
+    """
+    if page_w > 0 and page_h > 0:
+        ratio = float(page_h) / float(page_w)
+        box_h = min(max_h, int(round(max_w * ratio)))
+        box_w = min(max_w, int(round(box_h / ratio)) if ratio else max_w)
+        return max(1, box_w), max(1, box_h)
+    return max_w, max_h
 
 
 def _graphic_from_png(ctx, png):

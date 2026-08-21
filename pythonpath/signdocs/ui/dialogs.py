@@ -891,21 +891,6 @@ def _sync_move_buttons(dialog, state):
 
 
 # ---------------------------------------------------------- preview dialog
-def page_box(max_w, max_h, page_w, page_h):
-    """
-    The largest box inside `max_w` x `max_h` with the page's proportions.
-
-    Falls back to the whole area when the page reports no size, which is no
-    worse than before and never returns something with a zero edge.
-    """
-    if page_w > 0 and page_h > 0:
-        ratio = float(page_h) / float(page_w)
-        box_h = min(max_h, int(round(max_w * ratio)))
-        box_w = min(max_w, int(round(box_h / ratio)) if ratio else max_w)
-        return max(1, box_w), max(1, box_h)
-    return max_w, max_h
-
-
 def preview_dialog(ctx, frame, s, document):
     """
     Show the exported PDF, a page at a time.
@@ -956,7 +941,7 @@ def preview_dialog(ctx, frame, s, document):
     # control, and isotropic scaling on its own would letterbox it instead —
     # correct, but wasting half the dialog.
     size = getattr(graphics[0], "SizePixel", None)
-    box_w, box_h = page_box(inner, avail_h,
+    box_w, box_h = preview.page_box(inner, avail_h,
                             getattr(size, "Width", 0) if size else 0,
                             getattr(size, "Height", 0) if size else 0)
 
