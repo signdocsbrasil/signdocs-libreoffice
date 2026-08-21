@@ -541,6 +541,54 @@ def main():
                 except Exception:
                     pass
 
+        # -- landscape, end to end -----------------------------------------
+        #
+        # render_pixels is unit-tested against fake page objects, but what can
+        # actually break is the round trip through the office: importer ->
+        # per-page filter data -> exporter. Writer cannot catch it, because A4
+        # is portrait and a portrait page survives even the bug where both
+        # dimensions are pinned. Impress slides are landscape, and Calc and
+        # Impress are exactly the modules whose exports were being squeezed.
+        #
+        # The expected ratio comes from the document's own page rather than a
+        # hardcoded 16:9 — the default slide format has changed between
+        # LibreOffice versions, and a probe that fails on an older office is
+        # reporting on the office, not on this extension.
+        land_doc = None
+        try:
+            land_doc = desktop.loadComponentFromURL(
+                "private:factory/simpress", "_blank", 0, (_p("Hidden", True),))
+            slide = land_doc.DrawPages.getByIndex(0)
+            want = slide.Width / float(slide.Height)
+
+            land_export = intake.export_pdf(land_doc)
+            land_graphics, _ = sd_preview.render_all(ctx, land_export, limit=1)
+            size = land_graphics[0].SizePixel
+            got = size.Width / float(size.Height)
+
+            check("a landscape page previews landscape, not squeezed upright",
+                  size.Width > size.Height,
+                  "%dx%d px, lamina %dx%d" % (size.Width, size.Height,
+                                              slide.Width, slide.Height))
+            check("and the rendered page keeps the slide's proportions",
+                  abs(got - want) < 0.02,
+                  "renderizado %.3f vs lamina %.3f" % (got, want))
+            # Pins the long edge specifically: scaling the *short* edge to
+            # RENDER_LONG_EDGE_PX would keep the ratio and still render every
+            # landscape page far larger than intended.
+            check("the long edge is the one scaled to the render width",
+                  max(size.Width, size.Height) == sd_preview.RENDER_LONG_EDGE_PX,
+                  "%d px" % max(size.Width, size.Height))
+        except sd_preview.PreviewUnavailable as exc:
+            check("landscape preview unavailable, and said so cleanly",
+                  True, str(exc)[:60])
+        finally:
+            if land_doc is not None:
+                try:
+                    land_doc.close(False)
+                except Exception:
+                    pass
+
         # The dialog has to fit the screen it opens on. A fixed height came to
         # more pixels than the display had, which put the page buttons below
         # the bottom edge — invisible in any test that only checks the controls
