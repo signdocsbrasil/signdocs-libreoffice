@@ -351,14 +351,28 @@ def main():
         annual_row_full = s("plan_row_annual") % (
             probe_api.PLANS[0]["name"], probe_api.PLANS[0]["docs"] * 12,
             probe_api.format_price(probe_api.PLANS[0]["Anual"]) + s("per_year"))
+        # Compared against the monthly template rather than the literal
+        # "documentos/mês". The office runs in whatever language the machine is
+        # set to — macOS CI runs it in English — so a hardcoded Portuguese
+        # substring is absent for free there and the check proves nothing.
+        monthly_wording = s("plan_row") % (
+            probe_api.PLANS[0]["name"], probe_api.PLANS[0]["docs"] * 12,
+            probe_api.format_price(probe_api.PLANS[0]["Anual"]) + s("per_year"))
         check("an annual row quotes the WHOLE allowance, not a monthly rate",
-              "240" in annual_row_full and "documentos/m" not in annual_row_full,
+              "240" in annual_row_full and annual_row_full != monthly_wording,
               annual_row_full)
+        # Likewise: what is under test is that an annual plan *routes* to the
+        # annual template, not that the rendered text contains a given word.
+        # "anual" is not a substring of the English "annual", which is exactly
+        # what failed on macOS while passing on Linux.
+        annual_line = ui_strings.quota_line(s, {
+            "quota": {"allowed": True, "used": 19, "limit": 240,
+                      "remaining": 221, "source": "paid_plan"},
+            "user": {"plan": "Iniciante 20"}}) or ""
         check("and the usage line says so once the account is on it",
-              "anual" in (ui_strings.quota_line(s, {
-                  "quota": {"allowed": True, "used": 19, "limit": 240,
-                            "remaining": 221, "source": "paid_plan"},
-                  "user": {"plan": "Iniciante 20"}}) or ""))
+              annual_line == s("quota_line_annual") % ("Iniciante 20", 19, 240, 221)
+              and annual_line != s("quota_line") % ("Iniciante 20", 19, 240, 221),
+              annual_line)
 
         check("an annual row quotes the ANNUAL price, not the monthly one",
               "178,80" in annual_row and "19,90" not in annual_row,
