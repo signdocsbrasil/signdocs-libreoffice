@@ -315,6 +315,21 @@ def main():
     # public and the only useful value is a real person's e-mail.
     #
     #   SIGNDOCS_E2E_SUBUSER=<an address registered as a Convidados subuser>
+    #
+    # There is rarely a spare one, and pointing this at a real subuser means
+    # that if the guard ever regresses, a stranger receives a signing invite for
+    # a test document. Use a throwaway row on a non-deliverable address instead,
+    # so a regression bounces rather than reaching anyone:
+    #
+    #   aws dynamodb put-item --region us-east-1 \
+    #     --table-name Convidados-<suffix>-NONE --item '{
+    #       "email":{"S":"e2e-subusuario@example.invalid"},
+    #       "is_subusuario":{"BOOL":true},
+    #       "master_email":{"S":"<your master>"}}'
+    #
+    # The lookup is a GetItem keyed on the lowercased address that only reads
+    # is_subusuario and master_email, so those three fields are the whole
+    # fixture. Delete the row afterwards.
     subuser = os.environ.get("SIGNDOCS_E2E_SUBUSER")
     if not subuser:
         print("  skipped — set SIGNDOCS_E2E_SUBUSER to a registered subuser")
