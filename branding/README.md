@@ -25,3 +25,26 @@ magick signdocs-logo.png mask.png -alpha off -compose CopyOpacity -composite \
 
 256 rather than 512: the circle is 345px at its native size, so anything above
 that is invented detail at four times the weight.
+
+## `contrato-modelo.odt` — the document used in listing screenshots
+
+A fictitious service contract, three pages, with a signature block on the last
+one. Three pages because the preview screenshot has to show paging working; a
+one-page document makes the page controls look decorative.
+
+Every identifier in it is a checksum-valid test value already published in this
+repo's own tests, so the signer form accepts them and none of them identifies a
+real person or company:
+
+| | |
+|---|---|
+| CNPJ | `11.222.333/0001-81`, `11.444.777/0001-61` |
+| CPF | `529.982.247-25`, `123.456.789-09` |
+
+It carries a "MODELO — DOCUMENTO FICTÍCIO PARA DEMONSTRAÇÃO" line at the top.
+Delete it if it crowds the shot, but it is cheap insurance against a screenshot
+being read as a real client engagement.
+
+Clause 10 cites MP 2.200-2/2001 and Lei 14.063/2020 on purpose: it puts the
+legal basis for the signature inside the document being signed, so the
+screenshot explains itself without a caption.
