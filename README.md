@@ -47,12 +47,20 @@ usuários da estação.
 
 A extensão é um **cliente público OAuth 2.1** — não embarca segredo nenhum.
 
-Na primeira conexão ela se registra sozinha no servidor de autorização
-(RFC 7591 Dynamic Client Registration), sobe um servidor HTTP efêmero em
-`127.0.0.1` e abre o navegador padrão para o consentimento
-(authorization code + PKCE S256, o fluxo de aplicativo nativo da RFC 8252).
-O token de acesso fica só em memória; o refresh token fica no perfil do
-LibreOffice, com permissão restrita.
+O `client_id` é fixo e vem no pacote — não é credencial, justamente porque
+o cliente é público e não tem segredo. Não há registro dinâmico: o Cognito
+não implementa a RFC 7591 (ver `pythonpath/signdocs/oauth.py`). Em vez disso,
+as oito portas de loopback candidatas estão pré-registradas no app client,
+porque o `redirect_uri` é conferido por correspondência exata e não dá para
+saber de antemão qual estará livre (`pythonpath/signdocs/config.py`).
+
+A extensão sobe um servidor HTTP efêmero em `127.0.0.1` e abre o navegador
+padrão para o consentimento (authorization code + PKCE S256, o fluxo de
+aplicativo nativo da RFC 8252). O que ela recebe é um **ID token**, que
+identifica a pessoa e sozinho não abre a API: as chamadas vão para o tier
+`/libreoffice/*`, que guarda a credencial de API do lado do servidor. O ID
+token fica só em memória; o refresh token fica no perfil do LibreOffice, com
+permissão restrita.
 
 ## Autoteste
 
